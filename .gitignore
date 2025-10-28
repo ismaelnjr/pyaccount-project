@@ -38,6 +38,5 @@ ENV/
 Thumbs.db
 
 # Project specific
-config.ini
 *.code-workspace
 
