@@ -27,6 +27,12 @@ import pyodbc
 import pandas as pd
 from dateutil.parser import isoparse
 
+from pyaccount.classificacao import (
+    classificar_conta, 
+    CLASSIFICACAO_M1,
+    carregar_classificacao_do_ini
+)
+
 # ----------------------- helpers -----------------------
 def parse_date(s: str) -> date:
     try:
@@ -36,31 +42,26 @@ def parse_date(s: str) -> date:
         # fallback pandas
         return pd.to_datetime(s, dayfirst=True).date()
 
-def classificar_beancount(clas_cta: str, tipo_cta: Optional[str]) -> str:
+def classificar_beancount(
+    clas_cta: str, 
+    tipo_cta: Optional[str] = None,
+    mapeamento_customizado: Optional[Dict[str, str]] = None
+) -> str:
     """
-    Mapeia CLAS_CTA/TIPO_CTA -> grupo Beancount.
-    Preferir TIPO_CTA quando presente:
-      A=Ativo -> Assets
-      P=Passivo -> Liabilities
-      PL=Patrimônio Líquido -> Equity
-      R=Receita -> Income
-      D=Despesa -> Expenses
-    Caso contrário, usa prefixo da classificação (1.=Ativo, 2.=Passivo, 3.=PL, 4/5=Receita, 6/7=Despesa).
+    Mapeia CLAS_CTA -> grupo Beancount.
+    
+    Usa mapeamento customizado se fornecido, caso contrário usa a configuração padrão.
+    
+    Args:
+        clas_cta: Classificação da conta
+        tipo_cta: Tipo da conta ('A' = analítica, 'S' = sintética) - não usado para classificação
+        mapeamento_customizado: Dicionário opcional com mapeamento customizado de prefixos
+                                CLAS_CTA para categorias Beancount.
+    
+    Returns:
+        Nome da categoria Beancount
     """
-    if tipo_cta:
-        t = str(tipo_cta).strip().upper()
-        if t == "A":  return "Assets"
-        if t == "P":  return "Liabilities"
-        if t in ("PL", "P/L", "PATRIMONIO", "PATRIMÔNIO"): return "Equity"
-        if t.startswith("R"): return "Income"
-        if t.startswith("D"): return "Expenses"
-    clas = (clas_cta or "").strip()
-    if clas.startswith("1."): return "Assets"
-    if clas.startswith("2."): return "Liabilities"
-    if clas.startswith("3."): return "Equity"
-    if clas.startswith("4.") or clas.startswith("5."): return "Income"
-    if clas.startswith("6.") or clas.startswith("7."): return "Expenses"
-    return "Unknown"
+    return classificar_conta(clas_cta, tipo_cta, mapeamento_customizado)
 
 def normalizar_nome(nome: str) -> str:
     if pd.isna(nome): return "Sem_Nome"
@@ -93,6 +94,7 @@ def run_pipeline(
     somente_ativas: bool = False,
     abrir_equity_abertura: str = "Equity:Abertura",
     saldos_path: str | None = None,
+    classificacao_customizada: Optional[Dict[str, str]] = None,
 ) -> Path:
     outdir.mkdir(parents=True, exist_ok=True)
     bean_path = outdir / f"lancamentos_{empresa}_{inicio}_{fim}.beancount"
@@ -125,7 +127,8 @@ def run_pipeline(
         df_pc = df_pc[df_pc["SITUACAO_CTA"].astype(str).str.upper().eq("A")].copy()
 
     df_pc["BC_GROUP"] = [
-        classificar_beancount(clas, tipo) for clas, tipo in zip(df_pc["CLAS_CTA"], df_pc["TIPO_CTA"])
+        classificar_beancount(clas, tipo, classificacao_customizada) 
+        for clas, tipo in zip(df_pc["CLAS_CTA"], df_pc["TIPO_CTA"])
     ]
     df_pc["BC_NAME"] = df_pc["NOME_CTA"].astype(str).apply(normalizar_nome)
     df_pc["BC_ACCOUNT"] = df_pc["BC_GROUP"] + ":" + df_pc["BC_NAME"]
@@ -159,38 +162,38 @@ def run_pipeline(
         # manter apenas as colunas necessárias
         df_saldos = df_saldos[["BC_ACCOUNT", "saldo"]].copy()
     else:
-    # --- saldos até D-1
-    dia_anterior = inicio - timedelta(days=1)
-    sql_saldos = """
-    SELECT conta, SUM(valor) AS saldo
-    FROM (
-        SELECT l.cdeb_lan AS conta, SUM(l.vlor_lan) AS valor
-          FROM BETHADBA.CTLANCTO l
-         WHERE l.codi_emp = ?
-           AND l.data_lan <= ?
-         GROUP BY l.cdeb_lan
-        UNION ALL
-        SELECT l.ccre_lan AS conta, -SUM(l.vlor_lan) AS valor
-          FROM BETHADBA.CTLANCTO l
-         WHERE l.codi_emp = ?
-           AND l.data_lan <= ?
-         GROUP BY l.ccre_lan
-    ) X
-    GROUP BY conta
-    HAVING SUM(valor) <> 0
-    ORDER BY conta
-    """
-    df_saldos = pd.read_sql(sql_saldos, conn, params=[empresa, dia_anterior, empresa, dia_anterior])
-    if "conta" not in df_saldos.columns:
-        # compat: alguns bancos podem retornar colunas maiúsculas
-        df_saldos.columns = [c.lower() for c in df_saldos.columns]
+        # --- saldos até D-1
+        dia_anterior = inicio - timedelta(days=1)
+        sql_saldos = """
+        SELECT conta, SUM(valor) AS saldo
+        FROM (
+            SELECT l.cdeb_lan AS conta, SUM(l.vlor_lan) AS valor
+              FROM BETHADBA.CTLANCTO l
+             WHERE l.codi_emp = ?
+               AND l.data_lan <= ?
+             GROUP BY l.cdeb_lan
+            UNION ALL
+            SELECT l.ccre_lan AS conta, -SUM(l.vlor_lan) AS valor
+              FROM BETHADBA.CTLANCTO l
+             WHERE l.codi_emp = ?
+               AND l.data_lan <= ?
+             GROUP BY l.ccre_lan
+        ) X
+        GROUP BY conta
+        HAVING SUM(valor) <> 0
+        ORDER BY conta
+        """
+        df_saldos = pd.read_sql(sql_saldos, conn, params=[empresa, dia_anterior, empresa, dia_anterior])
+        if "conta" not in df_saldos.columns:
+            # compat: alguns bancos podem retornar colunas maiúsculas
+            df_saldos.columns = [c.lower() for c in df_saldos.columns]
 
-    if df_saldos.empty:
-        print("[aviso] Nenhum saldo histórico encontrado até D-1. Abertura ficará zerada.", file=sys.stderr)
+        if df_saldos.empty:
+            print("[aviso] Nenhum saldo histórico encontrado até D-1. Abertura ficará zerada.", file=sys.stderr)
 
-    df_saldos["conta"] = df_saldos["conta"].astype(str)
-    df_saldos["BC_ACCOUNT"] = df_saldos["conta"].map(mapa_clas_to_bc)
-    df_saldos = df_saldos.dropna(subset=["BC_ACCOUNT"]).copy()
+        df_saldos["conta"] = df_saldos["conta"].astype(str)
+        df_saldos["BC_ACCOUNT"] = df_saldos["conta"].map(mapa_clas_to_bc)
+        df_saldos = df_saldos.dropna(subset=["BC_ACCOUNT"]).copy()
 
     # integridade 1: somatório de saldos ~ 0
     total_abertura = float(df_saldos["saldo"].sum()) if not df_saldos.empty else 0.0
@@ -325,6 +328,7 @@ def main():
         raise SystemExit("Data final não pode ser menor que a inicial.")
 
     dsn = args.dsn; user = args.user; password = args.password
+    classificacao_customizada = None
     if args.config:
         cfg = configparser.ConfigParser()
         cfg.read(args.config)
@@ -335,6 +339,9 @@ def main():
         args.moeda = cfg.get("defaults", "moeda", fallback=args.moeda)
         if args.empresa is None:
             args.empresa = cfg.getint("defaults", "empresa", fallback=None)
+        
+        # Carrega classificação customizada se houver
+        classificacao_customizada = carregar_classificacao_do_ini(args.config)
 
     if not all([dsn, user, password]):
         raise SystemExit("Informe DSN/USER/PASSWORD via argumentos ou config.ini.")
@@ -351,6 +358,7 @@ def main():
         outdir=outdir,
         somente_ativas=args.somente_ativas,
         saldos_path=args.saldos,
+        classificacao_customizada=classificacao_customizada,
     )
     print(f"OK: gerado {bean_path.resolve()}")
 

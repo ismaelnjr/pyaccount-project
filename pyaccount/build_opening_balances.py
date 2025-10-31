@@ -12,7 +12,7 @@ Uso:
 
 Saída:
   out/saldos_iniciais_<empresa>_<ate>.csv
-  (colunas: conta, saldo, clas_cta, bc_account, empresa, data_corte)
+  (colunas: conta, NOME_CTA, BC_GROUP, saldo, CLAS_CTA, BC_ACCOUNT, empresa, data_corte)
 """
 import argparse
 import configparser
@@ -21,24 +21,40 @@ from datetime import date
 from typing import Optional, Dict
 import sys
 
-import pyodbc
 import pandas as pd
 from dateutil.parser import isoparse
+
+from pyaccount.db_client import ContabilDBClient
+from pyaccount.classificacao import (
+    classificar_conta, 
+    CLASSIFICACAO_M1,
+    carregar_classificacao_do_ini
+)
 
 
 class OpeningBalancesBuilder:
     """
     Constrói arquivos de saldos iniciais para Beancount a partir de banco de dados.
     
-    Esta classe encapsula toda a lógica necessária para:
-    - Conectar-se ao banco de dados
-    - Buscar plano de contas
-    - Buscar saldos até uma data específica
+    Esta classe encapsula a lógica de negócio necessária para:
+    - Buscar plano de contas via ContabilDBClient
+    - Buscar saldos até uma data específica via ContabilDBClient
     - Mapear contas do sistema contábil para Beancount
     - Exportar resultados em CSV
+    
+    A conexão com o banco de dados é gerenciada pela classe ContabilDBClient.
     """
     
-    def __init__(self, dsn: str, user: str, password: str, empresa: int, ate: date, saida: Path):
+    def __init__(
+        self, 
+        dsn: str, 
+        user: str, 
+        password: str, 
+        empresa: int, 
+        ate: date, 
+        saida: Path,
+        classificacao_customizada: Optional[Dict[str, str]] = None
+    ):
         """
         Inicializa o construtor de saldos iniciais.
         
@@ -49,33 +65,20 @@ class OpeningBalancesBuilder:
             empresa: Código da empresa
             ate: Data de corte (até quando calcular os saldos)
             saida: Diretório de saída dos arquivos
+            classificacao_customizada: Dicionário opcional com mapeamento customizado de prefixos
+                                      CLAS_CTA para categorias Beancount.
+                                      Ex: {"1": "Assets", "2": "Liabilities", "31": "Expenses", ...}
+                                      Se None, usa a configuração padrão.
         """
-        self.dsn = dsn
-        self.user = user
-        self.password = password
+        self.db_client = ContabilDBClient(dsn, user, password)
         self.empresa = empresa
         self.ate = ate
         self.saida = Path(saida)
-        self.conn: Optional[pyodbc.Connection] = None
+        self.classificacao_customizada = classificacao_customizada
         self.df_pc: Optional[pd.DataFrame] = None
         self.df_saldos: Optional[pd.DataFrame] = None
         self.mapa_clas_to_bc: Dict[str, str] = {}
     
-    def connect(self) -> None:
-        """Estabelece conexão com o banco de dados."""
-        if not all([self.dsn, self.user, self.password]):
-            raise ValueError("DSN, user e password devem ser fornecidos.")
-        
-        try:
-            self.conn = pyodbc.connect(f"DSN={self.dsn};UID={self.user};PWD={self.password}")
-        except Exception as e:
-            raise ConnectionError(f"Erro ao conectar ao banco de dados: {e}")
-    
-    def close(self) -> None:
-        """Fecha a conexão com o banco de dados."""
-        if self.conn:
-            self.conn.close()
-            self.conn = None
     
     def parse_date(cls, s: str) -> date:
         """
@@ -89,31 +92,24 @@ class OpeningBalancesBuilder:
         """
         return isoparse(s).date()
     
-    def classificar_beancount(cls, clas_cta: str, tipo_cta: Optional[str]) -> str:
+    def classificar_beancount(self, clas_cta: str, tipo_cta: Optional[str]) -> str:
         """
-        Classifica conta contábil em categoria Beancount.
+        Classifica conta contábil em categoria Beancount baseado em CLAS_CTA.
+        
+        Usa a configuração customizada fornecida no construtor, ou a configuração padrão.
         
         Args:
-            clas_cta: Classificação da conta (ex: "1.1.01")
-            tipo_cta: Tipo da conta (ex: "A" para Ativo, "P" para Passivo)
+            clas_cta: Classificação da conta (ex: "11210100708", "311203", "4")
+            tipo_cta: Tipo da conta ('A' = analítica, 'S' = sintética) - não usado para classificação
             
         Returns:
-            Nome da categoria Beancount (Assets, Liabilities, etc.)
+            Nome da categoria Beancount (Assets, Liabilities, Income, Expenses, etc.)
         """
-        if tipo_cta:
-            t = str(tipo_cta).strip().upper()
-            if t == "A":  return "Assets"
-            if t == "P":  return "Liabilities"
-            if t in ("PL", "P/L", "PATRIMONIO", "PATRIMÔNIO"): return "Equity"
-            if t.startswith("R"): return "Income"
-            if t.startswith("D"): return "Expenses"
-        clas = (clas_cta or "").strip()
-        if clas.startswith("1."): return "Assets"
-        if clas.startswith("2."): return "Liabilities"
-        if clas.startswith("3."): return "Equity"
-        if clas.startswith("4.") or clas.startswith("5."): return "Income"
-        if clas.startswith("6.") or clas.startswith("7."): return "Expenses"
-        return "Unknown"
+        return classificar_conta(
+            clas_cta, 
+            tipo_cta, 
+            self.classificacao_customizada
+        )
     
     def normalizar_nome(cls, nome: str) -> str:
         """
@@ -147,19 +143,8 @@ class OpeningBalancesBuilder:
         Returns:
             DataFrame com plano de contas e mapeamento para Beancount
         """
-        sql_pc = """
-        SELECT 
-          CODI_EMP,
-          CODI_CTA,
-          NOME_CTA,
-          CLAS_CTA,
-          TIPO_CTA,
-          SITUACAO_CTA
-        FROM BETHADBA.CTCONTAS
-        WHERE CODI_EMP = ?
-        """
-        
-        df_pc = pd.read_sql(sql_pc, self.conn, params=[self.empresa])
+        # Busca plano de contas usando o cliente de banco de dados
+        df_pc = self.db_client.buscar_plano_contas(self.empresa)
         
         # Aplica classificação Beancount
         df_pc["BC_GROUP"] = [
@@ -186,44 +171,15 @@ class OpeningBalancesBuilder:
         Returns:
             DataFrame com saldos por conta
         """
-        sql_saldos = """
-        SELECT conta, SUM(valor) AS saldo
-        FROM (
-            SELECT l.cdeb_lan AS conta, SUM(l.vlor_lan) AS valor
-              FROM BETHADBA.CTLANCTO l
-             WHERE l.codi_emp = ?
-               AND l.data_lan <= ?
-             GROUP BY l.cdeb_lan
-            UNION ALL
-            SELECT l.ccre_lan AS conta, -SUM(l.vlor_lan) AS valor
-              FROM BETHADBA.CTLANCTO l
-             WHERE l.codi_emp = ?
-               AND l.data_lan <= ?
-             GROUP BY l.ccre_lan
-        ) X
-        GROUP BY conta
-        HAVING SUM(valor) <> 0
-        ORDER BY conta
-        """
-        
-        df_saldos = pd.read_sql(
-            sql_saldos, 
-            self.conn, 
-            params=[self.empresa, self.ate, self.empresa, self.ate]
-        )
-        
-        # Normaliza nomes das colunas
-        if "conta" not in df_saldos.columns:
-            df_saldos.columns = [c.lower() for c in df_saldos.columns]
-        
-        df_saldos["conta"] = df_saldos["conta"].astype(str)
+        # Busca saldos usando o cliente de banco de dados
+        df_saldos = self.db_client.buscar_saldos(self.empresa, self.ate)
         
         self.df_saldos = df_saldos
         return df_saldos
     
     def processar_saldos(self) -> pd.DataFrame:
         """
-        Processa saldos adicionando metadados (empresa, data_corte, BC_ACCOUNT).
+        Processa saldos adicionando metadados (empresa, data_corte, BC_ACCOUNT, NOME_CTA, BC_GROUP).
         
         Returns:
             DataFrame processado com todas as colunas necessárias
@@ -231,11 +187,19 @@ class OpeningBalancesBuilder:
         if self.df_saldos is None or self.df_pc is None:
             raise ValueError("Plano de contas e saldos devem ser buscados primeiro.")
         
-        # Junta classificação para facilitar auditoria
-        df_result = self.df_saldos.merge(
-            self.df_pc[["CLAS_CTA", "BC_ACCOUNT"]], 
+        # Garante que os tipos sejam compatíveis para o merge
+        df_saldos_merge = self.df_saldos.copy()
+        df_pc_merge = self.df_pc[["CODI_CTA", "CLAS_CTA", "NOME_CTA", "BC_GROUP", "BC_ACCOUNT"]].copy()
+        
+        # Converte ambos para o mesmo tipo (string ou int)
+        df_saldos_merge["conta"] = df_saldos_merge["conta"].astype(str)
+        df_pc_merge["CODI_CTA"] = df_pc_merge["CODI_CTA"].astype(str)
+        
+        # Junta informações do plano de contas usando CODI_CTA (campo 'conta' corresponde a CODI_CTA)
+        df_result = df_saldos_merge.merge(
+            df_pc_merge, 
             left_on="conta", 
-            right_on="CLAS_CTA", 
+            right_on="CODI_CTA", 
             how="left"
         )
         
@@ -253,8 +217,12 @@ class OpeningBalancesBuilder:
             df: DataFrame a ser salvo
             out_path: Caminho do arquivo de saída
         """
-        cols = ["conta", "saldo", "CLAS_CTA", "BC_ACCOUNT", "empresa", "data_corte"]
-        df[cols].to_csv(out_path, index=False, sep=";", encoding="utf-8-sig")
+        # Define ordem das colunas: conta, descrição, classificação, saldo, conta Beancount, empresa, data
+        cols = ["conta", "NOME_CTA", "BC_GROUP", "saldo", "CLAS_CTA", "BC_ACCOUNT", "empresa", "data_corte"]
+        
+        # Filtra apenas colunas que existem no DataFrame
+        cols_existentes = [col for col in cols if col in df.columns]
+        df[cols_existentes].to_csv(out_path, index=False, sep=";", encoding="utf-8-sig")
     
     def execute(self) -> Path:
         """
@@ -269,7 +237,7 @@ class OpeningBalancesBuilder:
         
         try:
             # Conecta ao banco
-            self.connect()
+            self.db_client.connect()
             
             # Busca plano de contas
             self.buscar_plano_contas()
@@ -285,7 +253,7 @@ class OpeningBalancesBuilder:
             
         finally:
             # Sempre fecha a conexão
-            self.close()
+            self.db_client.close()
 
 
 def carregar_config(config_path: Optional[str]) -> tuple[Optional[str], Optional[str], Optional[str]]:
@@ -332,11 +300,15 @@ def main():
     password = args.password
     
     # Carrega config se fornecido
+    classificacao_customizada = None
     if args.config:
         cfg_dsn, cfg_user, cfg_password = carregar_config(args.config)
         if not dsn: dsn = cfg_dsn
         if not user: user = cfg_user
         if not password: password = cfg_password
+        
+        # Carrega classificação customizada se houver
+        classificacao_customizada = carregar_classificacao_do_ini(args.config)
 
     # Valida credenciais
     if not all([dsn, user, password]):
@@ -350,7 +322,8 @@ def main():
         password=password,
         empresa=args.empresa,
         ate=ate,
-        saida=args.saida
+        saida=args.saida,
+        classificacao_customizada=classificacao_customizada
     )
     
     try:

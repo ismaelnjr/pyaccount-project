@@ -8,7 +8,7 @@ os.chdir(test_root)
 sys.path.insert(0, os.path.dirname(test_root))
 sys.path.insert(0, test_root)
 
-from pycount.build_opening_balances import OpeningBalancesBuilder
+from pyaccount.build_opening_balances import OpeningBalancesBuilder
 from datetime import date
 
 class TestBuildOpeningBalances(unittest.TestCase):
