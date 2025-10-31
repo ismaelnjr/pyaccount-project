@@ -40,3 +40,8 @@ Thumbs.db
 # Project specific
 *.code-workspace
 
+# Arquivos de saída gerados
+out/
+**/out/
+test/out/
+
