@@ -11,19 +11,35 @@ import configparser
 
 # Configuração padrão de classificação
 CLASSIFICACAO_M1: Dict[str, str] = {
-    "1": "Ativo",       # Assets    
-    "11": "Ativo Circulante", # Current Assets
-    "12": "Ativo Não Circulante", # Non-Current Assets
-    "2": "Passivo",     # Liabilities
-    "21": "Passivo Circulante", # Current Liabilities
-    "22": "Passivo Não Circulante", # Non-Current Liabilities
-    "23": "Patrimônio Líquido", # Equity
-    "3": "Custo/Despesa",      # Costs/Expenses
-    "31": "Custo",      # Costs
-    "32": "Despesa",    # Expenses
-    "4": "Receita",     # Income
-    "5": "Conta temporária", # Temporary
-    "9": "Conta de compensação", # Compensation
+    # 1 - Ativo
+    "1":  "Assets:Ativo",                      # Ativo geral
+    "11": "Assets:Ativo-Circulante",           # Ativo Circulante
+    "12": "Assets:Ativo-Nao-Circulante",       # Ativo Não Circulante
+    
+    # 2 - Passivo e Patrimônio Líquido
+    "2":  "Liabilities:Passivo",               # Passivo geral
+    "21": "Liabilities:Passivo-Circulante",    # Passivo Circulante
+    "22": "Liabilities:Passivo-Nao-Circulante",# Passivo Não Circulante
+    "23": "Equity:Patrimonio-Liquido",         # Patrimônio Líquido
+    
+    # 3 - Custos e Despesas
+    "3":  "Expenses:Custos-Despesas",          # Agrupamento geral
+    "31": "Expenses:Custos",                   # Custos (CPV, CMP)
+    "32": "Expenses:Despesas-Operacionais",    # Despesas operacionais
+    "33": "Expenses:Despesas-Financeiras",     # Despesas financeiras
+    "34": "Expenses:Outras-Despesas",          # Outras despesas
+    
+    # 4 - Receitas
+    "4":  "Income:Receitas",                   # Receita geral
+    "41": "Income:Receitas-Operacionais",      # Receita operacional
+    "42": "Income:Receitas-Financeiras",       # Receita financeira
+    "43": "Income:Outras-Receitas",            # Outras receitas
+    
+    # 5 - Contas Transitórias
+    "5":  "Equity:Contas-Transitorias",     # Ex: contas de fechamento / apuração
+    
+    # 9 - Contas de Compensação
+    "9":  "Equity:Contas-Compensacao"      # Contas de controle / não patrimoniais (usando Equity como tipo válido do Beancount)
 }
 
 

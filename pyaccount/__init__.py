@@ -4,6 +4,7 @@ PyAccount - Ferramentas para importação de dados contábeis para Beancount.
 
 from pyaccount.db_client import ContabilDBClient
 from pyaccount.build_opening_balances import OpeningBalancesBuilder
+from pyaccount.beancount_pipeline import BeancountPipeline
 from pyaccount.classificacao import (
     classificar_conta,
     CLASSIFICACAO_M1,
@@ -14,6 +15,7 @@ from pyaccount.classificacao import (
 __all__ = [
     "ContabilDBClient", 
     "OpeningBalancesBuilder",
+    "BeancountPipeline",
     "classificar_conta",
     "CLASSIFICACAO_M1",
     "carregar_classificacao_do_ini",

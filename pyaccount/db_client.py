@@ -149,6 +149,113 @@ class ContabilDBClient:
         
         return df
     
+    def buscar_movimentacoes_periodo(self, empresa: int, de: date, ate: date) -> pd.DataFrame:
+        """
+        Busca movimentações (débitos e créditos) de um período específico.
+        
+        Args:
+            empresa: Código da empresa
+            de: Data inicial do período (exclusiva - movimentações após esta data)
+            ate: Data final do período (inclusive - movimentações até esta data)
+            
+        Returns:
+            DataFrame com colunas: conta, movimento (com nomes de colunas em minúsculas)
+            movimento = débitos - créditos (valor positivo aumenta saldo, negativo diminui)
+            
+        Raises:
+            RuntimeError: Se não estiver conectado ao banco de dados
+        """
+        if not self.is_connected():
+            raise RuntimeError("Não está conectado ao banco de dados. Chame connect() primeiro.")
+        
+        sql = """
+        SELECT conta, SUM(valor) AS movimento
+        FROM (
+            SELECT l.cdeb_lan AS conta, l.vlor_lan AS valor
+              FROM BETHADBA.CTLANCTO l
+             WHERE l.codi_emp = ?
+               AND l.data_lan > ?
+               AND l.data_lan <= ?
+            UNION ALL
+            SELECT l.ccre_lan AS conta, -l.vlor_lan AS valor
+              FROM BETHADBA.CTLANCTO l
+             WHERE l.codi_emp = ?
+               AND l.data_lan > ?
+               AND l.data_lan <= ?
+        ) X
+        GROUP BY conta
+        HAVING SUM(valor) <> 0
+        ORDER BY conta
+        """
+        
+        df = pd.read_sql(
+            sql, 
+            self.conn, 
+            params=[empresa, de, ate, empresa, de, ate]
+        )
+        
+        # Normaliza nomes das colunas para minúsculas
+        if df.columns.size > 0:
+            if "conta" not in df.columns:
+                df.columns = [c.lower() for c in df.columns]
+            df["conta"] = df["conta"].astype(str)
+        
+        return df
+    
+    def buscar_lancamentos_periodo(self, empresa: int, inicio: date, fim: date) -> pd.DataFrame:
+        """
+        Busca lançamentos contábeis de um período específico.
+        
+        Args:
+            empresa: Código da empresa
+            inicio: Data inicial do período (inclusive)
+            fim: Data final do período (inclusive)
+            
+        Returns:
+            DataFrame com colunas: codi_emp, nume_lan, data_lan, vlor_lan,
+                                  cdeb_lan, ccre_lan, codi_his, chis_lan,
+                                  ndoc_lan, codi_lote, tipo, codi_usu
+            
+        Raises:
+            RuntimeError: Se não estiver conectado ao banco de dados
+        """
+        if not self.is_connected():
+            raise RuntimeError("Não está conectado ao banco de dados. Chame connect() primeiro.")
+        
+        sql = """
+        SELECT  
+         l.codi_emp,
+         l.nume_lan, 
+         l.data_lan, 
+         l.vlor_lan,
+         l.cdeb_lan,
+         l.ccre_lan,
+         l.codi_his,
+         l.chis_lan,
+         l.ndoc_lan,
+         l.codi_lote,
+         t.tipo,
+         l.codi_usu
+        FROM 
+         BETHADBA.CTLANCTO l
+         JOIN BETHADBA.CTLANCTOLOTE t
+           ON l.codi_emp = t.codi_emp
+          AND l.codi_lote = t.codi_lote
+        WHERE 
+         l.codi_emp = ?
+         AND l.data_lan BETWEEN ? AND ?
+        ORDER BY l.data_lan, l.nume_lan
+        """
+        
+        df = pd.read_sql(sql, self.conn, params=[empresa, inicio, fim])
+        
+        # Normaliza nomes das colunas para minúsculas
+        if df.columns.size > 0:
+            if "conta" not in df.columns:
+                df.columns = [c.lower() for c in df.columns]
+        
+        return df
+    
     def executar_query(self, sql: str, params: Optional[list] = None) -> pd.DataFrame:
         """
         Executa uma query SQL genérica e retorna um DataFrame.
