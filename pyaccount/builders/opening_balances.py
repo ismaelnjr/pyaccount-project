@@ -6,13 +6,13 @@ para evitar varredura histórica a cada execução do pipeline principal.
 
 Uso:
   # Busca saldo direto até data final
-  python build_opening_balances.py \
+  python opening_balances.py \
       --dsn SQLANYWHERE17 --user dba --password sql \
       --empresa 437 --ate 2025-08-31 \
       --saida ./out
 
   # Calcula saldo usando saldos iniciais de arquivo + movimentações do período
-  python build_opening_balances.py \
+  python opening_balances.py \
       --dsn SQLANYWHERE17 --user dba --password sql \
       --empresa 437 --saldos-iniciais saldos_2023-12-31.csv \
       --data-abertura 2023-12-31 --ate 2024-01-31 \
@@ -33,10 +33,10 @@ import sys
 import pandas as pd
 from dateutil.parser import isoparse
 
-from pyaccount.db_client import ContabilDBClient
-from pyaccount.classificacao import AccountClassifier
-from pyaccount.account_mapper import AccountMapper
-from pyaccount.utils import normalizar_nome
+from pyaccount.data.db_client import ContabilDBClient
+from pyaccount.core.account_classifier import AccountClassifier
+from pyaccount.core.account_mapper import AccountMapper
+from pyaccount.builders.financial_statements import _FinancialStatementBase
 
 
 class OpeningBalancesBuilder:
@@ -111,24 +111,9 @@ class OpeningBalancesBuilder:
         self.df_saldos: Optional[pd.DataFrame] = None
         self.mapa_clas_to_bc: Dict[str, str] = {}
     
-    
-    def parse_date(cls, s: str) -> date:
-        """
-        Converte string de data para objeto date.
-        
-        Args:
-            s: String de data (formato ISO YYYY-MM-DD)
-            
-        Returns:
-            Objeto date
-        """
-        return isoparse(s).date()
-    
     def classificar_beancount(self, clas_cta: str, tipo_cta: Optional[str]) -> str:
         """
         Classifica conta contábil em categoria Beancount baseado em CLAS_CTA.
-        
-        Usa a configuração customizada fornecida no construtor, ou a configuração padrão.
         
         Args:
             clas_cta: Classificação da conta (ex: "11210100708", "311203", "4")
@@ -207,7 +192,6 @@ class OpeningBalancesBuilder:
         
         return df
     
-    
     def buscar_plano_contas(self) -> pd.DataFrame:
         """
         Busca plano de contas do banco de dados e mapeia para Beancount.
@@ -272,7 +256,7 @@ class OpeningBalancesBuilder:
                 df_saldos = df_saldo_inicial.join(
                     df_movimentacoes, 
                     how="outer"
-        )
+                )
         
                 # Preenche NaN com 0
                 df_saldos["saldo"] = df_saldos["saldo"].fillna(0)
@@ -308,20 +292,13 @@ class OpeningBalancesBuilder:
         if self.df_saldos is None or self.df_pc is None:
             raise ValueError("Plano de contas e saldos devem ser buscados primeiro.")
         
-        # Garante que os tipos sejam compatíveis para o merge
-        df_saldos_merge = self.df_saldos.copy()
-        df_pc_merge = self.df_pc[["CODI_CTA", "CLAS_CTA", "NOME_CTA", "BC_GROUP", "BC_ACCOUNT"]].copy()
-        
-        # Converte ambos para o mesmo tipo (string ou int)
-        df_saldos_merge["conta"] = df_saldos_merge["conta"].astype(str)
-        df_pc_merge["CODI_CTA"] = df_pc_merge["CODI_CTA"].astype(str)
-        
-        # Junta informações do plano de contas usando CODI_CTA (campo 'conta' corresponde a CODI_CTA)
-        df_result = df_saldos_merge.merge(
-            df_pc_merge, 
-            left_on="conta", 
-            right_on="CODI_CTA", 
-            how="left"
+        # Usa método auxiliar para merge
+        df_result = _FinancialStatementBase._merge_com_plano_contas(
+            self.df_saldos,
+            self.df_pc,
+            coluna_conta_df="conta",
+            coluna_conta_pc="CODI_CTA",
+            colunas_pc=["CODI_CTA", "CLAS_CTA", "NOME_CTA", "BC_GROUP", "BC_ACCOUNT"]
         )
         
         # Adiciona metadados
@@ -389,6 +366,7 @@ class OpeningBalancesBuilder:
             self.db_client.close()
 
 
+# Funções utilitárias para CLI
 def carregar_saldos_iniciais_de_arquivo(
     caminho_arquivo: Union[str, Path], 
     separador: str = ";",
@@ -519,3 +497,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

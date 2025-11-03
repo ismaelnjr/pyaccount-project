@@ -3,7 +3,11 @@
 Gera um arquivo `.beancount` a partir de consultas SQL (plano de contas, saldos de abertura e lançamentos por período).
 
 ## Estrutura
-- `beancount_pipeline.py` — script principal (CLI)
+- `pyaccount/` — módulo principal
+  - `core/` — funções base compartilhadas (classificação, mapeamento, utilitários)
+  - `data/` — acesso a dados (ODBC client)
+  - `builders/` — construtores de relatórios (balanço, DRE, balancete, saldos iniciais)
+  - `export/` — exportadores (Beancount, Excel)
 - `sql_queries.sql` — consultas de referência (usadas inline no script)
 - `requirements.txt` — dependências
 - `config.ini.example` — exemplo de configuração
@@ -21,13 +25,13 @@ pip install -r requirements.txt
 
 ### 1) Via argumentos
 ```bash
-python beancount_pipeline.py   --dsn SQLANYWHERE17 --user dba --password sql   --empresa 437 --inicio 2025-09-01 --fim 2025-09-18   --saida ./out --moeda BRL --somente-ativas
+python -m pyaccount.export.beancount_pipeline   --dsn SQLANYWHERE17 --user dba --password sql   --empresa 437 --inicio 2025-09-01 --fim 2025-09-18   --saida ./out --moeda BRL --somente-ativas
 ```
 
 ### 2) Com arquivo de configuração
 Crie um `config.ini` a partir do `config.ini.example`, e execute:
 ```bash
-python beancount_pipeline.py   --config ./config.ini   --empresa 437 --inicio 2025-09-01 --fim 2025-09-18   --saida ./out
+python -m pyaccount.export.beancount_pipeline   --config ./config.ini   --empresa 437 --inicio 2025-09-01 --fim 2025-09-18   --saida ./out
 ```
 
 ## Saídas
@@ -49,13 +53,13 @@ python beancount_pipeline.py   --config ./config.ini   --empresa 437 --inicio 20
 Para evitar varredura histórica a cada execução, gere um CSV de **saldos iniciais** até a data D‑1 do período que você quer abrir:
 
 ```bash
-python build_opening_balances.py   --dsn SQLANYWHERE17 --user dba --password sql   --empresa 437 --ate 2025-08-31   --saida ./out
+python -m pyaccount.builders.opening_balances   --dsn SQLANYWHERE17 --user dba --password sql   --empresa 437 --ate 2025-08-31   --saida ./out
 ```
 
 Depois, passe o CSV ao pipeline principal:
 
 ```bash
-python beancount_pipeline.py   --config ./config.ini   --empresa 437 --inicio 2025-09-01 --fim 2025-09-18   --saldos ./out/saldos_iniciais_437_2025-08-31.csv   --saida ./out
+python -m pyaccount.export.beancount_pipeline   --config ./config.ini   --empresa 437 --inicio 2025-09-01 --fim 2025-09-18   --saldos ./out/saldos_iniciais_437_2025-08-31.csv   --saida ./out
 ```
 **Observações**
 - O CSV contém ao menos `BC_ACCOUNT` e `saldo`. Colunas extras (`empresa`, `data_corte`) são usadas para alerta/validação.

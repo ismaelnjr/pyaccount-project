@@ -5,13 +5,13 @@ from pathlib import Path
 from datetime import date
 
 # Necessário para que o arquivo de testes encontre
-test_root = os.path.dirname(os.path.abspath(__file__))
-os.chdir(test_root)
-sys.path.insert(0, os.path.dirname(test_root))
-sys.path.insert(0, test_root)
+test_file_dir = os.path.dirname(os.path.abspath(__file__))
+test_dir = os.path.dirname(test_file_dir)  # test/
+project_root = os.path.dirname(test_dir)  # raiz do projeto
+os.chdir(test_dir)  # muda para test/ para que caminhos relativos funcionem
+sys.path.insert(0, project_root)
 
-from pyaccount.excel_exporter import ExcelExporter
-from pyaccount.db_client import ContabilDBClient
+from pyaccount import ExcelExporter, ContabilDBClient
 
 
 class TestExcelExporter(unittest.TestCase):
