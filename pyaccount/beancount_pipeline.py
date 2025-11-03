@@ -50,18 +50,19 @@ class BeancountPipeline:
     
     def __init__(
         self,
-        dsn: str,
-        user: str,
-        password: str,
-        empresa: int,
-        inicio: date,
-        fim: date,
-        moeda: str,
-        outdir: Path,
-        somente_ativas: bool = False,
-        abrir_equity_abertura: str = "Equity:Abertura",
+    dsn: str,
+    user: str,
+    password: str,
+    empresa: int,
+    inicio: date,
+    fim: date,
+    moeda: str,
+    outdir: Path,
+    somente_ativas: bool = False,
+    abrir_equity_abertura: str = "Equity:Abertura",
         saldos_path: Optional[str] = None,
         classificacao_customizada: Optional[Dict[str, str]] = None,
+        desconsiderar_zeramento: bool = True,
     ):
         """
         Inicializa o pipeline Beancount.
@@ -80,6 +81,7 @@ class BeancountPipeline:
             saldos_path: Caminho opcional para CSV de saldos de abertura (cache)
             classificacao_customizada: Dicionário opcional com mapeamento customizado
                                       de prefixos CLAS_CTA para categorias Beancount
+            desconsiderar_zeramento: Se True, exclui lançamentos com orig_lan = 2 (Zeramento)
         """
         self.db_client = ContabilDBClient(dsn, user, password)
         self.empresa = empresa
@@ -91,6 +93,7 @@ class BeancountPipeline:
         self.abrir_equity_abertura = abrir_equity_abertura
         self.saldos_path = saldos_path
         self.classificacao_customizada = classificacao_customizada
+        self.desconsiderar_zeramento = desconsiderar_zeramento
         
         # DataFrames internos
         self.df_pc: Optional[pd.DataFrame] = None
@@ -225,6 +228,17 @@ class BeancountPipeline:
         
         if df_lanc.empty:
             print("[aviso] Nenhum lançamento no período informado.", file=sys.stderr)
+        
+        # Filtra lançamentos de zeramento se desconsiderar_zeramento = True
+        if self.desconsiderar_zeramento and "orig_lan" in df_lanc.columns:
+            antes = len(df_lanc)
+            df_lanc = df_lanc[df_lanc["orig_lan"] != 2].copy()
+            depois = len(df_lanc)
+            if antes > depois:
+                print(
+                    f"[info] Excluídos {antes - depois} lançamentos de zeramento (orig_lan = 2).",
+                    file=sys.stderr
+                )
         
         # Normalizações
         df_lanc["data_lan"] = pd.to_datetime(df_lanc["data_lan"]).dt.date
@@ -377,11 +391,42 @@ class BeancountPipeline:
                         continue
                     
                     if abs(total_debitos - total_creditos) > 0.01:
-                        print(
+                        # Detecta contas de débito não mapeadas
+                        contas_debito_sem_map = grupo[
+                            (grupo["cdeb_lan"].astype(str).str.strip() != "0") &
+                            (grupo["BC_DEB"].isna())
+                        ]
+                        debitos_nao_encontrados = []
+                        if not contas_debito_sem_map.empty:
+                            debitos_nao_encontrados = contas_debito_sem_map["cdeb_lan"].unique().tolist()
+                            debitos_nao_encontrados = [str(int(c)) if pd.notna(c) else "?" for c in debitos_nao_encontrados]
+                        
+                        # Detecta contas de crédito não mapeadas
+                        contas_credito_sem_map = grupo[
+                            (grupo["ccre_lan"].astype(str).str.strip() != "0") &
+                            (grupo["BC_CRE"].isna())
+                        ]
+                        creditos_nao_encontrados = []
+                        if not contas_credito_sem_map.empty:
+                            creditos_nao_encontrados = contas_credito_sem_map["ccre_lan"].unique().tolist()
+                            creditos_nao_encontrados = [str(int(c)) if pd.notna(c) else "?" for c in creditos_nao_encontrados]
+                        
+                        # Monta mensagem de aviso com detalhes
+                        msg = (
                             f"[aviso] Lote {lote_id} não balanceado: "
-                            f"débitos={total_debitos:.2f}, créditos={total_creditos:.2f}",
-                            file=sys.stderr
+                            f"débitos={total_debitos:.2f}, créditos={total_creditos:.2f}"
                         )
+                        
+                        detalhes = []
+                        if debitos_nao_encontrados:
+                            detalhes.append(f"Débito(s) não encontrado(s): {', '.join(debitos_nao_encontrados)}")
+                        if creditos_nao_encontrados:
+                            detalhes.append(f"Crédito(s) não encontrado(s): {', '.join(creditos_nao_encontrados)}")
+                        
+                        if detalhes:
+                            msg += " | " + " | ".join(detalhes)
+                        
+                        print(msg, file=sys.stderr)
                         continue
                     
                     # Obtém metadados do primeiro registro do lote
@@ -472,6 +517,7 @@ def main():
     ap.add_argument("--somente-ativas", action="store_true", help="Abrir apenas contas com SITUACAO_CTA = 'A'")
     ap.add_argument("--config", default=None, help="Arquivo INI com [database] dsn/user/password (opcional)")
     ap.add_argument("--saldos", default=None, help="Caminho para CSV de saldos iniciais (cache) gerado por build_opening_balances.py")
+    ap.add_argument("--incluir-zeramento", action="store_true", help="Incluir lançamentos de zeramento (orig_lan = 2). Por padrão, são excluídos.")
     args = ap.parse_args()
     
     inicio = parse_date(args.inicio)
@@ -517,6 +563,7 @@ def main():
         somente_ativas=args.somente_ativas,
         saldos_path=args.saldos,
         classificacao_customizada=classificacao_customizada,
+        desconsiderar_zeramento=not args.incluir_zeramento,
     )
     
     try:

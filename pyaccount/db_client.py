@@ -214,7 +214,8 @@ class ContabilDBClient:
         Returns:
             DataFrame com colunas: codi_emp, nume_lan, data_lan, vlor_lan,
                                   cdeb_lan, ccre_lan, codi_his, chis_lan,
-                                  ndoc_lan, codi_lote, tipo, codi_usu
+                                  ndoc_lan, codi_lote, tipo, codi_usu,
+                                  orig_lan, origem_descricao
             
         Raises:
             RuntimeError: Se não estiver conectado ao banco de dados
@@ -235,16 +236,20 @@ class ContabilDBClient:
          l.ndoc_lan,
          l.codi_lote,
          t.tipo,
-         l.codi_usu
+         l.codi_usu,
+         l.orig_lan,
+         o.descricao AS origem_descricao
         FROM 
          BETHADBA.CTLANCTO l
          JOIN BETHADBA.CTLANCTOLOTE t
            ON l.codi_emp = t.codi_emp
           AND l.codi_lote = t.codi_lote
+         LEFT JOIN BETHADBA.CTORIGEM_LANCAMENTO o
+           ON l.orig_lan = o.i_origem
         WHERE 
          l.codi_emp = ?
          AND l.data_lan BETWEEN ? AND ?
-        ORDER BY l.data_lan, l.nume_lan
+        ORDER BY l.data_lan, l.codi_lote, l.nume_lan
         """
         
         df = pd.read_sql(sql, self.conn, params=[empresa, inicio, fim])
