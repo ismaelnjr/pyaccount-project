@@ -43,89 +43,95 @@ CLASSIFICACAO_M1: Dict[str, str] = {
 }
 
 
-def classificar_conta(
-    clas_cta: str, 
-    tipo_cta: Optional[str] = None,
-    mapeamento_contas: Optional[Dict[str, str]] = None
-) -> str:
+class AccountClassifier:
     """
-    Classifica conta contábil em categoria Beancount baseado em CLAS_CTA.
+    Classificador de contas contábeis em categorias Beancount.
     
-    Usa mapeamento customizado se fornecido, caso contrário usa a configuração padrão.
-    Os prefixos mais longos são verificados primeiro (ex: "31" antes de "3").
-    
-    Args:
-        clas_cta: Classificação da conta (ex: "11210100708", "311203", "4")
-        tipo_cta: Tipo da conta ('A' = analítica, 'S' = sintética) - não usado para classificação
-        mapeamento_contas: Dicionário opcional com prefixos e categorias Beancount customizados
-                                Ex: {"1": "Assets", "2": "Liabilities", ...}
-    
-    Returns:
-        Nome da categoria Beancount (Assets, Liabilities, Income, Expenses, etc.)
+    Permite configuração customizada por empresa, com valores padrão.
     """
-    # Usa mapeamento customizado ou padrão
-    mapeamento = mapeamento_contas if mapeamento_contas else CLASSIFICACAO_M1
     
-    # Converte CLAS_CTA para string para garantir comparação correta
-    clas = str(clas_cta or "").strip()
+    def __init__(self, mapeamento_customizado: Optional[Dict[str, str]] = None):
+        """
+        Inicializa o classificador.
+        
+        Args:
+            mapeamento_customizado: Dicionário opcional com prefixos e categorias Beancount customizados
+        """
+        self.mapeamento = mapeamento_customizado if mapeamento_customizado else CLASSIFICACAO_M1
+        # Ordena prefixos por comprimento (maior primeiro) para verificar os mais específicos primeiro
+        self._prefixos_ordenados = sorted(self.mapeamento.keys(), key=len, reverse=True)
     
-    if not clas:
+    def classificar(self, clas_cta: str, tipo_cta: Optional[str] = None) -> str:
+        """
+        Classifica conta contábil em categoria Beancount baseado em CLAS_CTA.
+        
+        Usa mapeamento customizado se fornecido, caso contrário usa a configuração padrão.
+        Os prefixos mais longos são verificados primeiro (ex: "31" antes de "3").
+        
+        Args:
+            clas_cta: Classificação da conta (ex: "11210100708", "311203", "4")
+            tipo_cta: Tipo da conta ('A' = analítica, 'S' = sintética) - não usado para classificação
+        
+        Returns:
+            Nome da categoria Beancount (Assets, Liabilities, Income, Expenses, etc.)
+        """
+        # Converte CLAS_CTA para string para garantir comparação correta
+        clas = str(clas_cta or "").strip()
+        
+        if not clas:
+            return "Unknown"
+        
+        # Verifica prefixos específicos primeiro
+        for prefixo in self._prefixos_ordenados:
+            if clas.startswith(prefixo):
+                return self.mapeamento[prefixo]
+        
         return "Unknown"
     
-    # Ordena prefixos por comprimento (maior primeiro) para verificar os mais específicos primeiro
-    prefixos_ordenados = sorted(mapeamento.keys(), key=len, reverse=True)
+    @classmethod
+    def carregar_do_config(cls, config: Dict) -> Optional['AccountClassifier']:
+        """
+        Carrega configuração de classificação de um dicionário de configuração.
+        
+        Args:
+            config: Dicionário de configuração com chaves no formato "clas_<prefixo>"
+                    Ex: {"clas_1": "Assets", "clas_2": "Liabilities", ...}
+        
+        Returns:
+            Instância de AccountClassifier ou None se não houver configuração customizada
+        """
+        mapeamento = {}
+        
+        for chave, valor in config.items():
+            if chave.startswith("clas_") and chave != "clas_cta":
+                prefixo = chave.replace("clas_", "")
+                mapeamento[prefixo] = valor.strip()
+        
+        return cls(mapeamento) if mapeamento else None
     
-    # Verifica prefixos específicos primeiro
-    for prefixo in prefixos_ordenados:
-        if clas.startswith(prefixo):
-            return mapeamento[prefixo]
-    
-    return "Unknown"
-
-
-def carregar_classificacao_do_config(config: Dict) -> Optional[Dict[str, str]]:
-    """
-    Carrega configuração de classificação de um dicionário de configuração.
-    
-    Args:
-        config: Dicionário de configuração com chaves no formato "clas_<prefixo>"
-                Ex: {"clas_1": "Assets", "clas_2": "Liabilities", ...}
-    
-    Returns:
-        Dicionário de mapeamento ou None se não houver configuração customizada
-    """
-    mapeamento = {}
-    
-    for chave, valor in config.items():
-        if chave.startswith("clas_") and chave != "clas_cta":
-            prefixo = chave.replace("clas_", "")
-            mapeamento[prefixo] = valor.strip()
-    
-    return mapeamento if mapeamento else None
-
-
-def carregar_classificacao_do_ini(config_path: str, section: str = "classification") -> Optional[Dict[str, str]]:
-    """
-    Carrega configuração de classificação de um arquivo INI.
-    
-    Args:
-        config_path: Caminho do arquivo INI
-        section: Nome da seção no arquivo INI (default: "classification")
-    
-    Returns:
-        Dicionário de mapeamento ou None se não houver configuração customizada
-    """
-    cfg = configparser.ConfigParser()
-    cfg.read(config_path)
-    
-    if not cfg.has_section(section):
-        return None
-    
-    mapeamento = {}
-    for chave, valor in cfg.items(section):
-        if chave.startswith("clas_"):
-            prefixo = chave.replace("clas_", "")
-            mapeamento[prefixo] = valor.strip()
-    
-    return mapeamento if mapeamento else None
+    @classmethod
+    def carregar_do_ini(cls, config_path: str, section: str = "classification") -> Optional['AccountClassifier']:
+        """
+        Carrega configuração de classificação de um arquivo INI.
+        
+        Args:
+            config_path: Caminho do arquivo INI
+            section: Nome da seção no arquivo INI (default: "classification")
+        
+        Returns:
+            Instância de AccountClassifier ou None se não houver configuração customizada
+        """
+        cfg = configparser.ConfigParser()
+        cfg.read(config_path)
+        
+        if not cfg.has_section(section):
+            return None
+        
+        mapeamento = {}
+        for chave, valor in cfg.items(section):
+            if chave.startswith("clas_"):
+                prefixo = chave.replace("clas_", "")
+                mapeamento[prefixo] = valor.strip()
+        
+        return cls(mapeamento) if mapeamento else None
 

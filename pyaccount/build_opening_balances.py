@@ -34,10 +34,8 @@ import pandas as pd
 from dateutil.parser import isoparse
 
 from pyaccount.db_client import ContabilDBClient
-from pyaccount.classificacao import (
-    classificar_conta, 
-    carregar_classificacao_do_ini
-)
+from pyaccount.classificacao import AccountClassifier
+from pyaccount.account_mapper import AccountMapper
 from pyaccount.utils import normalizar_nome
 
 
@@ -105,6 +103,10 @@ class OpeningBalancesBuilder:
                     f"data_abertura ({data_abertura}) deve ser anterior à data final 'ate' ({ate})"
                 )
         
+        # Mapeador de contas (classe base compartilhada)
+        self.account_mapper = AccountMapper(classificacao_customizada)
+        
+        # DataFrames internos
         self.df_pc: Optional[pd.DataFrame] = None
         self.df_saldos: Optional[pd.DataFrame] = None
         self.mapa_clas_to_bc: Dict[str, str] = {}
@@ -135,11 +137,7 @@ class OpeningBalancesBuilder:
         Returns:
             Nome da categoria Beancount (Assets, Liabilities, Income, Expenses, etc.)
         """
-        return classificar_conta(
-            clas_cta, 
-            tipo_cta, 
-            self.classificacao_customizada
-        )
+        return self.account_mapper.classificar_beancount(clas_cta, tipo_cta)
     
     @staticmethod
     def normalizar_saldos_iniciais(
@@ -220,33 +218,12 @@ class OpeningBalancesBuilder:
         # Busca plano de contas usando o cliente de banco de dados
         df_pc = self.db_client.buscar_plano_contas(self.empresa)
         
-        # Aplica classificação Beancount
-        df_pc["BC_GROUP"] = [
-            self.classificar_beancount(c, t) 
-            for c, t in zip(df_pc["CLAS_CTA"], df_pc["TIPO_CTA"])
-        ]
-        
-        # Normaliza nomes
-        df_pc["BC_NAME"] = df_pc["NOME_CTA"].astype(str).apply(normalizar_nome)
-        # BC_GROUP já vem no formato correto (ex: "Assets:Ativo_Circulante")
-        # Se BC_GROUP já contém ":", apenas concatena com BC_NAME usando ":"
-        # Caso contrário, normaliza BC_GROUP e adiciona ":"
-        def criar_bc_account(row):
-            bc_group = str(row["BC_GROUP"])
-            bc_name = str(row["BC_NAME"])
-            if ":" in bc_group:
-                # BC_GROUP já está no formato hierárquico, apenas adiciona BC_NAME
-                return bc_group + ":" + bc_name
-            else:
-                # BC_GROUP precisa ser normalizado e então adiciona BC_NAME
-                bc_group_norm = normalizar_nome(bc_group)
-                return bc_group_norm + ":" + bc_name
-        
-        # Cria conta Beancount completa
-        df_pc["BC_ACCOUNT"] = df_pc.apply(criar_bc_account, axis=1)
+        # Processa plano de contas usando AccountMapper
+        df_pc = self.account_mapper.processar_plano_contas(df_pc, filtrar_ativas=False)
         
         # Cria mapa para lookup
-        self.mapa_clas_to_bc = dict(zip(df_pc["CLAS_CTA"].astype(str), df_pc["BC_ACCOUNT"]))
+        mapas = self.account_mapper.criar_mapas(df_pc)
+        self.mapa_clas_to_bc = mapas["clas_to_bc"]
         
         self.df_pc = df_pc
         return df_pc
@@ -511,7 +488,8 @@ def main():
         if not password: password = cfg_password
         
         # Carrega classificação customizada se houver
-        classificacao_customizada = carregar_classificacao_do_ini(args.config)
+        classifier = AccountClassifier.carregar_do_ini(args.config)
+        classificacao_customizada = classifier.mapeamento if classifier else None
 
     # Valida credenciais
     if not all([dsn, user, password]):
