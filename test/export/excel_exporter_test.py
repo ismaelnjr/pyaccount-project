@@ -12,6 +12,7 @@ os.chdir(test_dir)  # muda para test/ para que caminhos relativos funcionem
 sys.path.insert(0, project_root)
 
 from pyaccount import ExcelExporter, ContabilDBClient
+from pyaccount.core.account_classifier import TipoPlanoContas
 
 
 class TestExcelExporter(unittest.TestCase):
@@ -19,9 +20,9 @@ class TestExcelExporter(unittest.TestCase):
     def test_excel_export(self):
         """Testa geração de arquivo Excel com dados contábeis."""
         
-        empresa = 437
-        inicio_periodo = date(2024, 1, 1)
-        fim_periodo = date(2024, 12, 31)
+        empresa = 267
+        inicio_periodo = date(2025, 1, 1)
+        fim_periodo = date(2025, 12, 31)
         
         print(f"\n--- Teste: Gerando arquivo Excel para período {inicio_periodo} a {fim_periodo} ---")
         
@@ -42,7 +43,8 @@ class TestExcelExporter(unittest.TestCase):
                 db_client=db_client,
                 empresa=empresa,
                 inicio=inicio_periodo,
-                fim=fim_periodo
+                fim=fim_periodo,
+                modelo=TipoPlanoContas.SIMPLIFICADO
             )
             
             # Exporta para Excel
