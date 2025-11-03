@@ -21,8 +21,8 @@ class TestBeancountPipeline(unittest.TestCase):
         """Testa geração de arquivo Beancount para um período específico."""
         
         empresa = 437
-        inicio_periodo = date(2025, 1, 1)
-        fim_periodo = date(2025, 12, 31)
+        inicio_periodo = date(2024, 1, 1)
+        fim_periodo = date(2024, 12, 31)
         dia_anterior = inicio_periodo - timedelta(days=1)  
         
         # Passo 1: Gera saldos de abertura em 

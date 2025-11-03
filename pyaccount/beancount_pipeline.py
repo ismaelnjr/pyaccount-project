@@ -97,6 +97,7 @@ class BeancountPipeline:
         self.df_saldos: Optional[pd.DataFrame] = None
         self.df_lanc: Optional[pd.DataFrame] = None
         self.mapa_clas_to_bc: Dict[str, str] = {}
+        self.mapa_codi_to_bc: Dict[str, str] = {}
     
     def classificar_beancount(self, clas_cta: str, tipo_cta: Optional[str] = None) -> str:
         """
@@ -151,8 +152,10 @@ class BeancountPipeline:
         
         df_pc["BC_ACCOUNT"] = df_pc.apply(criar_bc_account, axis=1)
         
-        # Cria mapa para lookup
+        # Cria mapas para lookup
         self.mapa_clas_to_bc = dict(zip(df_pc["CLAS_CTA"].astype(str), df_pc["BC_ACCOUNT"]))
+        # Mapa por código de conta (CODI_CTA) - usado para mapear cdeb_lan e ccre_lan
+        self.mapa_codi_to_bc = dict(zip(df_pc["CODI_CTA"].astype(str), df_pc["BC_ACCOUNT"]))
         
         self.df_pc = df_pc
         return df_pc
@@ -202,9 +205,9 @@ class BeancountPipeline:
             if df_saldos.empty:
                 print("[aviso] Nenhum saldo histórico encontrado até D-1. Abertura ficará zerada.", file=sys.stderr)
             
-            # Mapeia contas para Beancount
+            # Mapeia contas para Beancount (conta é CODI_CTA, não CLAS_CTA)
             df_saldos["conta"] = df_saldos["conta"].astype(str)
-            df_saldos["BC_ACCOUNT"] = df_saldos["conta"].map(self.mapa_clas_to_bc)
+            df_saldos["BC_ACCOUNT"] = df_saldos["conta"].map(self.mapa_codi_to_bc)
             df_saldos = df_saldos.dropna(subset=["BC_ACCOUNT"]).copy()
             df_saldos = df_saldos[["BC_ACCOUNT", "saldo"]].copy()
         
@@ -226,8 +229,9 @@ class BeancountPipeline:
         # Normalizações
         df_lanc["data_lan"] = pd.to_datetime(df_lanc["data_lan"]).dt.date
         df_lanc["vlor_lan"] = pd.to_numeric(df_lanc["vlor_lan"], errors="coerce").fillna(0.0)
-        df_lanc["BC_DEB"] = df_lanc["cdeb_lan"].astype(str).map(self.mapa_clas_to_bc)
-        df_lanc["BC_CRE"] = df_lanc["ccre_lan"].astype(str).map(self.mapa_clas_to_bc)
+        # Mapeia códigos de conta (cdeb_lan e ccre_lan são CODI_CTA) para contas Beancount
+        df_lanc["BC_DEB"] = df_lanc["cdeb_lan"].astype(str).map(self.mapa_codi_to_bc)
+        df_lanc["BC_CRE"] = df_lanc["ccre_lan"].astype(str).map(self.mapa_codi_to_bc)
         
         self.df_lanc = df_lanc
         return df_lanc
@@ -331,28 +335,80 @@ class BeancountPipeline:
                     f.write(f"  {r['BC_ACCOUNT']:<60} {fmt_amount(r['saldo'], self.moeda)}\n")
                 f.write(f"  {self.abrir_equity_abertura}\n\n")
             
-            # Lançamentos
-            if self.df_lanc is not None:
-                for _, r in self.df_lanc.iterrows():
-                    deb = r.get("BC_DEB")
-                    cre = r.get("BC_CRE")
-                    if pd.isna(deb) or pd.isna(cre): 
+            # Lançamentos agrupados por lote
+            if self.df_lanc is not None and not self.df_lanc.empty:
+                # Agrupa por codi_lote e data_lan
+                df_lanc_filtrado = self.df_lanc[
+                    (self.df_lanc["cdeb_lan"].astype(str).str.strip() != "0") |
+                    (self.df_lanc["ccre_lan"].astype(str).str.strip() != "0")
+                ].copy()
+                
+                for (lote_id, data_lan), grupo in df_lanc_filtrado.groupby(["codi_lote", "data_lan"]):
+                    # Processa débitos: filtra linhas onde cdeb_lan != 0 e BC_DEB não é NaN
+                    debitos_df = grupo[
+                        (grupo["cdeb_lan"].astype(str).str.strip() != "0") &
+                        (grupo["BC_DEB"].notna())
+                    ].copy()
+                    
+                    # Processa créditos: filtra linhas onde ccre_lan != 0 e BC_CRE não é NaN
+                    creditos_df = grupo[
+                        (grupo["ccre_lan"].astype(str).str.strip() != "0") &
+                        (grupo["BC_CRE"].notna())
+                    ].copy()
+                    
+                    # Agrupa débitos por conta e soma valores
+                    debitos_por_conta = {}
+                    if not debitos_df.empty:
+                        for conta_deb, subgrupo in debitos_df.groupby("BC_DEB"):
+                            debitos_por_conta[conta_deb] = float(subgrupo["vlor_lan"].sum())
+                    
+                    # Agrupa créditos por conta e soma valores
+                    creditos_por_conta = {}
+                    if not creditos_df.empty:
+                        for conta_cre, subgrupo in creditos_df.groupby("BC_CRE"):
+                            creditos_por_conta[conta_cre] = float(subgrupo["vlor_lan"].sum())
+                    
+                    # Valida que soma de débitos = soma de créditos
+                    total_debitos = sum(debitos_por_conta.values())
+                    total_creditos = sum(creditos_por_conta.values())
+                    
+                    # Ignora lotes sem débitos ou créditos válidos, ou que não estão balanceados
+                    if not debitos_por_conta and not creditos_por_conta:
                         continue
                     
-                    data_txt = r["data_lan"].strftime("%Y-%m-%d")
-                    hist = (str(r.get('chis_lan') or '')).replace('\\n', ' ').strip()
-                    ndoc = str(r.get('ndoc_lan') or '')
-                    lote = str(r.get('codi_lote') or '')
-                    usu = str(r.get('codi_usu') or '')
+                    if abs(total_debitos - total_creditos) > 0.01:
+                        print(
+                            f"[aviso] Lote {lote_id} não balanceado: "
+                            f"débitos={total_debitos:.2f}, créditos={total_creditos:.2f}",
+                            file=sys.stderr
+                        )
+                        continue
+                    
+                    # Obtém metadados do primeiro registro do lote
+                    primeiro_registro = grupo.iloc[0]
+                    data_txt = data_lan.strftime("%Y-%m-%d")
+                    hist = (str(primeiro_registro.get('chis_lan') or '')).replace('\\n', ' ').strip()
+                    ndoc = str(primeiro_registro.get('ndoc_lan') or '')
+                    lote = str(lote_id)
+                    usu = str(primeiro_registro.get('codi_usu') or '')
                     meta = " ".join(filter(None, [
-                        f'Doc {ndoc}' if ndoc else '', 
-                        f'Lote {lote}' if lote else '', 
-                        f'Usu {usu}' if usu else ''
+                        f'Doc {ndoc}' if ndoc and ndoc != 'nan' else '', 
+                        f'Lote {lote}' if lote and lote != 'nan' else '', 
+                        f'Usu {usu}' if usu and usu != 'nan' else ''
                     ]))
                     
+                    # Escreve cabeçalho da transação
                     f.write(f'{data_txt} * "{hist}" "{meta}"\n')
-                    f.write(f"  {deb:<60} {fmt_amount(r['vlor_lan'], self.moeda)}\n")
-                    f.write(f"  {cre:<60} {fmt_amount(-r['vlor_lan'], self.moeda)}\n\n")
+                    
+                    # Escreve linhas de débito (positivas)
+                    for conta_deb, valor in sorted(debitos_por_conta.items()):
+                        f.write(f"  {conta_deb:<60} {fmt_amount(valor, self.moeda)}\n")
+                    
+                    # Escreve linhas de crédito (negativas)
+                    for conta_cre, valor in sorted(creditos_por_conta.items()):
+                        f.write(f"  {conta_cre:<60} {fmt_amount(-valor, self.moeda)}\n")
+                    
+                    f.write("\n")
         
         return bean_path
     
