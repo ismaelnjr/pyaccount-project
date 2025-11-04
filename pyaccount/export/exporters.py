@@ -19,7 +19,7 @@ from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 
 from pyaccount.data.db_client import ContabilDBClient
-from pyaccount.core.account_classifier import AccountClassifier, TipoPlanoContas
+from pyaccount.core.account_classifier import AccountClassifier, TipoPlanoContas, obter_classificacao_do_modelo
 from pyaccount.core.account_mapper import AccountMapper
 from pyaccount.builders.financial_statements import (
     BalanceSheetBuilder,
@@ -297,8 +297,11 @@ class ExcelExporter:
         self.desconsiderar_zeramento = desconsiderar_zeramento
         self.agrupamento_periodo = agrupamento_periodo
         
+        # Obtém classificação baseada no modelo e customizações
+        classificacao = obter_classificacao_do_modelo(modelo, classificacao_customizada)
+        
         # Mapeador de contas (classe base compartilhada)
-        self.account_mapper = AccountMapper(classificacao_customizada, modelo)
+        self.account_mapper = AccountMapper(classificacao)
         
         # DataFrames internos
         self.df_pc: Optional[pd.DataFrame] = None

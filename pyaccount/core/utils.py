@@ -23,9 +23,19 @@ def normalizar_nome(nome: str) -> str:
     
     s = str(nome).strip()
     
-    # Trata contas "contra-ativo" que começam com "(-)"
-    if s.startswith("(-)"):
-        s = s.replace("(-)", "Redutora ")
+    # Trata contas "contra-ativo" que começam com "(-)" ou variações com espaços
+    # Remove padrões como "(-)", "( - )", "( -)", "(- )" etc.
+    padroes_contra_ativo = [
+        r"^\(\s*-\s*\)",  # "( - )" no início
+        r"^\(\s*-\)",     # "( -)" no início
+        r"^\(-\s*\)",     # "(- )" no início
+        r"^\(-\)",        # "(-)" no início
+    ]
+    for padrao in padroes_contra_ativo:
+        if re.match(padrao, s):
+            # Remove o padrão completamente (sem substituir por nada)
+            s = re.sub(padrao, "", s)
+            break
     
     # Remove acentos
     repl = {
@@ -52,9 +62,39 @@ def normalizar_nome(nome: str) -> str:
     # Remove caracteres especiais (mantém apenas letras, números, hífen e espaço)
     s = re.sub(r"[^A-Za-z0-9\- ]+", " ", s)
     
-    # Divide em tokens e capitaliza cada um
-    tokens = [t for t in re.split(r"\s+", s) if t]
+    # Remove hífens duplicados/consecutivos (ex: "--" -> "-")
+    s = re.sub(r"-+", "-", s)
+    
+    # Normaliza espaços múltiplos para espaços simples
+    s = re.sub(r"\s+", " ", s)
+    
+    # Remove hífens que estão isolados (rodeados por espaços ou no início/fim)
+    # Primeiro, remove hífens no início e fim
+    s = s.strip("- ")
+    # Depois, remove hífens que são tokens isolados (rodeados por espaços)
+    s = re.sub(r"\s-\s", " ", s)  # Remove " - " 
+    s = re.sub(r"^\s*-\s+", "", s)  # Remove "- " no início
+    s = re.sub(r"\s+-\s*$", "", s)  # Remove " -" no fim
+    
+    # Divide em tokens por espaços e hífens
+    # Primeiro divide por espaços, depois por hífens dentro de cada token
+    tokens = []
+    for token in s.split():
+        token = token.strip()
+        if not token or token == "-":
+            continue
+        # Se o token contém hífens, divide por hífens também
+        if "-" in token:
+            subtokens = [t.strip() for t in token.split("-") if t.strip()]
+            tokens.extend(subtokens)
+        else:
+            tokens.append(token)
+    
+    # Capitaliza cada token e junta com hífen
     s = "-".join([t.capitalize() for t in tokens])
+    
+    # Remove hífens no início e fim do resultado final (caso algum token tenha sido apenas hífen)
+    s = s.strip("-")
     
     return s or "Sem-Nome"
 
@@ -73,15 +113,3 @@ def fmt_amount(v: float, cur: str) -> str:
     return f"{v:.2f} {cur}"
 
 
-def format_val(v: float, currency: str) -> str:
-    """
-    Alias para fmt_amount para compatibilidade com código existente.
-    
-    Args:
-        v: Valor numérico
-        currency: Código da moeda (ex: "BRL")
-        
-    Returns:
-        String formatada no formato "665650.84 BRL"
-    """
-    return fmt_amount(v, currency)

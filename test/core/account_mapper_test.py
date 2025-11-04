@@ -11,6 +11,7 @@ os.chdir(test_dir)  # muda para test/ para que caminhos relativos funcionem
 sys.path.insert(0, project_root)
 
 from pyaccount.core.account_mapper import AccountMapper
+from pyaccount.core.utils import normalizar_nome
 
 
 class TestAccountMapper(unittest.TestCase):
@@ -225,6 +226,92 @@ class TestAccountMapper(unittest.TestCase):
         # Verifica que BC_ACCOUNT nos mapas corresponde ao processado
         conta_101 = df_processado[df_processado["CODI_CTA"] == "101"].iloc[0]
         self.assertEqual(mapas["codi_to_bc"]["101"], conta_101["BC_ACCOUNT"])
+
+    def test_normalizar_nome_com_padrao_contra_ativo_com_espacos(self):
+        """Testa normalização de nome com padrão '( - )' e variações."""
+        # Testa o caso específico reportado: "( - ) DEPRECIAÇÃO ACUMULADA MOVEIS E UTENS"
+        resultado = normalizar_nome("( - ) DEPRECIAÇÃO ACUMULADA MOVEIS E UTENS")
+        self.assertEqual(resultado, "Depreciacao-Acumulada-Moveis-E-Utens")
+        # Verifica que não começa com hífen
+        self.assertFalse(resultado.startswith("-"))
+        # Verifica que não tem hífens duplicados
+        self.assertNotIn("--", resultado)
+        
+        # Testa outras variações do padrão
+        resultado2 = normalizar_nome("( -) DEPRECIAÇÃO ACUMULADA")
+        self.assertEqual(resultado2, "Depreciacao-Acumulada")
+        self.assertFalse(resultado2.startswith("-"))
+        
+        resultado3 = normalizar_nome("(- ) DEPRECIAÇÃO ACUMULADA")
+        self.assertEqual(resultado3, "Depreciacao-Acumulada")
+        self.assertFalse(resultado3.startswith("-"))
+        
+        # Testa o padrão original "(-)" que deve ser tratado como antes
+        resultado4 = normalizar_nome("(-) DEPRECIAÇÃO ACUMULADA")
+        self.assertEqual(resultado4, "Depreciacao-Acumulada")
+        self.assertFalse(resultado4.startswith("-"))
+
+    def test_normalizar_nome_sem_hifens_duplicados(self):
+        """Testa que nomes normalizados não têm hífens duplicados."""
+        # Testa com múltiplos hífens consecutivos
+        resultado = normalizar_nome("CONTA -- COM -- HIFENS")
+        self.assertNotIn("--", resultado)
+        self.assertEqual(resultado, "Conta-Com-Hifens")
+        
+        # Testa com hífens no meio
+        resultado2 = normalizar_nome("CONTA---COM---MUITOS---HIFENS")
+        self.assertNotIn("--", resultado2)
+        self.assertEqual(resultado2, "Conta-Com-Muitos-Hifens")
+
+    def test_normalizar_nome_sem_hifens_inicio_fim(self):
+        """Testa que nomes normalizados não começam nem terminam com hífen."""
+        # Testa com hífen no início
+        resultado = normalizar_nome("-CONTA INICIO")
+        self.assertFalse(resultado.startswith("-"))
+        self.assertEqual(resultado, "Conta-Inicio")
+        
+        # Testa com hífen no fim
+        resultado2 = normalizar_nome("CONTA FIM-")
+        self.assertFalse(resultado2.endswith("-"))
+        self.assertEqual(resultado2, "Conta-Fim")
+        
+        # Testa com hífens em ambos os lados
+        resultado3 = normalizar_nome("-CONTA AMBOS-")
+        self.assertFalse(resultado3.startswith("-"))
+        self.assertFalse(resultado3.endswith("-"))
+        self.assertEqual(resultado3, "Conta-Ambos")
+
+    def test_normalizar_nome_integracao_com_account_mapper(self):
+        """Testa integração da normalização com AccountMapper."""
+        mapper = AccountMapper()
+        
+        # Testa com o caso específico reportado
+        df_pc = pd.DataFrame({
+            "CODI_CTA": ["101"],
+            "CLAS_CTA": ["11"],
+            "TIPO_CTA": ["A"],
+            "NOME_CTA": ["( - ) DEPRECIAÇÃO ACUMULADA MOVEIS E UTENS"]
+        })
+        
+        df_processado = mapper.processar_plano_contas(df_pc)
+        
+        # Verifica que BC_NAME não tem hífens duplicados ou no início
+        bc_name = df_processado.iloc[0]["BC_NAME"]
+        self.assertNotIn("--", bc_name)
+        self.assertFalse(bc_name.startswith("-"))
+        self.assertEqual(bc_name, "Depreciacao-Acumulada-Moveis-E-Utens")
+        
+        # Verifica que BC_ACCOUNT também está correto
+        bc_account = df_processado.iloc[0]["BC_ACCOUNT"]
+        self.assertNotIn("--", bc_account)
+        self.assertFalse(bc_account.startswith(":"))
+        # Verifica que não há hífens duplicados após os dois pontos
+        partes = bc_account.split(":")
+        for parte in partes:
+            self.assertNotIn("--", parte)
+            if parte:  # Se não for vazia
+                self.assertFalse(parte.startswith("-"))
+                self.assertFalse(parte.endswith("-"))
 
 
 if __name__ == "__main__":

@@ -34,7 +34,7 @@ import pandas as pd
 from dateutil.parser import isoparse
 
 from pyaccount.data.db_client import ContabilDBClient
-from pyaccount.core.account_classifier import AccountClassifier
+from pyaccount.core.account_classifier import AccountClassifier, TipoPlanoContas, obter_classificacao_do_modelo
 from pyaccount.core.account_mapper import AccountMapper
 from pyaccount.builders.financial_statements import _FinancialStatementBase
 
@@ -61,6 +61,7 @@ class OpeningBalancesBuilder:
         ate: date, 
         saida: Path,
         classificacao_customizada: Optional[Dict[str, str]] = None,
+        modelo: Optional[TipoPlanoContas] = None,
         saldos_iniciais: Optional[Union[Dict[str, float], pd.DataFrame]] = None,
         data_abertura: Optional[date] = None
     ):
@@ -78,6 +79,9 @@ class OpeningBalancesBuilder:
                                       CLAS_CTA para categorias Beancount.
                                       Ex: {"1": "Assets", "2": "Liabilities", "31": "Expenses", ...}
                                       Se None, usa a configuração padrão.
+            modelo: Tipo de plano de contas a usar (TipoPlanoContas.PADRAO_BR, SIMPLIFICADO, IFRS).
+                    Se None, usa CLASSIFICACAO_PADRAO_BR. Se classificacao_customizada for fornecido,
+                    tem prioridade sobre o modelo.
             saldos_iniciais: Saldos iniciais (de abertura) fornecidos externamente. Pode ser:
                             - Dict[str, float]: {"conta": saldo, ...} onde conta é o CODI_CTA
                             - pd.DataFrame: Deve conter coluna 'conta' (ou 'CODI_CTA') e 'saldo'
@@ -103,8 +107,11 @@ class OpeningBalancesBuilder:
                     f"data_abertura ({data_abertura}) deve ser anterior à data final 'ate' ({ate})"
                 )
         
+        # Obtém classificação baseada no modelo e customizações
+        classificacao = obter_classificacao_do_modelo(modelo, classificacao_customizada)
+        
         # Mapeador de contas (classe base compartilhada)
-        self.account_mapper = AccountMapper(classificacao_customizada)
+        self.account_mapper = AccountMapper(classificacao)
         
         # DataFrames internos
         self.df_pc: Optional[pd.DataFrame] = None

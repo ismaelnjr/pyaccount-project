@@ -81,34 +81,108 @@ Atualmente, a exportação para Excel deve ser feita via código Python (não h�
 
 ## Uso Programático
 
-### Classificação de Contas
+### AccountClassifier vs AccountMapper
 
-O sistema suporta múltiplos modelos de classificação:
+O sistema possui duas classes principais para trabalhar com contas contábeis:
+
+#### AccountClassifier (Classificador)
+**Responsabilidade:** Classificar contas contábeis em categorias Beancount baseado apenas em `CLAS_CTA`.
+
+- **Entrada:** `CLAS_CTA` (ex: "11", "31", "4")
+- **Saída:** Categoria Beancount (ex: "Assets:Ativo-Circulante", "Expenses:Custos")
+- **Foco:** Apenas classificação (CLAS_CTA → categoria)
+- **Uso:** Quando você precisa apenas classificar uma conta específica
 
 ```python
-from pyaccount import AccountClassifier, TipoPlanoContas
+from pyaccount.core.account_classifier import AccountClassifier, obter_classificacao_do_modelo, TipoPlanoContas
 
-# Modelo padrão brasileiro (usado quando nenhum modelo é especificado)
-classifier = AccountClassifier()
+# Obter classificação do modelo
+classificacao = obter_classificacao_do_modelo(TipoPlanoContas.PADRAO)
+classifier = AccountClassifier(classificacao)
+
+# Classificar uma conta
+grupo = classifier.classificar("11")  # Retorna: "Assets:Ativo-Circulante"
+grupo = classifier.classificar("31")  # Retorna: "Expenses:Custos"
+```
+
+#### AccountMapper (Mapeador)
+**Responsabilidade:** Mapear contas contábeis completas para Beancount, incluindo classificação, normalização de nomes e criação de contas hierárquicas.
+
+- **Entrada:** DataFrame com plano de contas completo (CLAS_CTA, NOME_CTA, CODI_CTA, etc.)
+- **Saída:** DataFrame processado com colunas BC_GROUP, BC_NAME, BC_ACCOUNT
+- **Foco:** Processamento completo (classificação + normalização + estrutura hierárquica)
+- **Uso:** Quando você precisa processar um plano de contas completo
+
+```python
+from pyaccount.core.account_mapper import AccountMapper
+from pyaccount.core.account_classifier import obter_classificacao_do_modelo, TipoPlanoContas
+
+# Obter classificação do modelo
+classificacao = obter_classificacao_do_modelo(TipoPlanoContas.PADRAO)
+mapper = AccountMapper(classificacao)
+
+# Processar plano de contas completo
+df_processado = mapper.processar_plano_contas(df_pc)
+# Resultado: DataFrame com BC_GROUP, BC_NAME, BC_ACCOUNT
+# Exemplo: "Assets:Ativo-Circulante:Caixa"
+
+# Criar mapas de lookup
+mapas = mapper.criar_mapas(df_processado)
+conta_beancount = mapas["codi_to_bc"]["101"]  # Ex: "Assets:Ativo-Circulante:Caixa"
+```
+
+#### Relação entre eles
+
+```
+AccountMapper
+    └── usa AccountClassifier internamente (via self.classifier)
+    └── adiciona normalização de nomes (via normalizar_nome)
+    └── adiciona criação de contas hierárquicas (via criar_bc_account)
+    └── adiciona processamento de DataFrames completos
+```
+
+**Resumo:**
+- **AccountClassifier**: Classificação básica (CLAS_CTA → categoria)
+- **AccountMapper**: Processamento completo (usa AccountClassifier + normalização + hierarquia)
+
+### Classificação de Contas
+
+O sistema suporta múltiplos modelos de classificação. Para usar modelos, primeiro obtenha o dicionário de classificação:
+
+```python
+from pyaccount.core.account_classifier import (
+    AccountClassifier,
+    obter_classificacao_do_modelo,
+    TipoPlanoContas
+)
+
+# Obter classificação do modelo padrão
+classificacao = obter_classificacao_do_modelo(TipoPlanoContas.PADRAO)
+classifier = AccountClassifier(classificacao)
 
 # Modelo específico
-classifier_ifrs = AccountClassifier(modelo=TipoPlanoContas.IFRS)
-classifier_simplificado = AccountClassifier(modelo=TipoPlanoContas.SIMPLIFICADO)
+classificacao_ifrs = obter_classificacao_do_modelo(TipoPlanoContas.IFRS)
+classifier_ifrs = AccountClassifier(classificacao_ifrs)
+
+classificacao_simplificado = obter_classificacao_do_modelo(TipoPlanoContas.SIMPLIFICADO)
+classifier_simplificado = AccountClassifier(classificacao_simplificado)
 
 # Classificação customizada (tem prioridade sobre modelo)
-classifier_custom = AccountClassifier(mapeamento_customizado={
-    "1": "Assets:Customizado",
-    "2": "Liabilities:Custom"
-})
-
-# Factory method para criar com modelo
-classifier = AccountClassifier.criar_com_modelo(TipoPlanoContas.PADRAO)
+classificacao_custom = obter_classificacao_do_modelo(
+    TipoPlanoContas.PADRAO,
+    customizacoes={
+        "1": "Assets:Customizado",
+        "2": "Liabilities:Custom"
+    }
+)
+classifier_custom = AccountClassifier(classificacao_custom)
 
 # Classificar uma conta
 grupo = classifier.classificar("11210100708")  # Retorna "Assets:Ativo-Circulante"
 
 # Listar modelos disponíveis
-modelos = AccountClassifier.obter_modelos_disponiveis()
+from pyaccount.core.account_classifier import MODELOS_CLASSIFICACAO
+modelos = list(MODELOS_CLASSIFICACAO.keys())
 for modelo in modelos:
     print(f"{modelo.value}: {modelo}")
 ```
@@ -116,16 +190,22 @@ for modelo in modelos:
 ### Mapeamento de Contas
 
 ```python
-from pyaccount import AccountMapper, TipoPlanoContas
+from pyaccount.core.account_mapper import AccountMapper
+from pyaccount.core.account_classifier import obter_classificacao_do_modelo, TipoPlanoContas
 
-# Criar mapeador com modelo específico
-mapper = AccountMapper(modelo=TipoPlanoContas.PADRAO)
+# Obter classificação do modelo e criar mapeador
+classificacao = obter_classificacao_do_modelo(TipoPlanoContas.PADRAO)
+mapper = AccountMapper(classificacao)
 
 # Ou com classificação customizada
-mapper = AccountMapper(classificacao_customizada={
-    "1": "Assets:Customizado",
-    "2": "Liabilities:Custom"
-})
+classificacao_custom = obter_classificacao_do_modelo(
+    TipoPlanoContas.PADRAO,
+    customizacoes={
+        "1": "Assets:Customizado",
+        "2": "Liabilities:Custom"
+    }
+)
+mapper = AccountMapper(classificacao_custom)
 
 # Processar plano de contas
 df_processado = mapper.processar_plano_contas(df_pc)
@@ -273,13 +353,27 @@ clas_2 = Liabilities:Custom
 ### Classificação via código
 
 ```python
+from pyaccount.core.account_mapper import AccountMapper
+from pyaccount.core.account_classifier import obter_classificacao_do_modelo, TipoPlanoContas
+
+# Opção 1: Usar modelo com customizações
+classificacao = obter_classificacao_do_modelo(
+    TipoPlanoContas.PADRAO,
+    customizacoes={
+        "1": "Assets:Customizado",
+        "11": "Assets:Ativo-Circulante-Custom",
+        "2": "Liabilities:Custom"
+    }
+)
+mapper = AccountMapper(classificacao)
+
+# Opção 2: Usar apenas customizações (sem modelo base)
 classificacao_custom = {
     "1": "Assets:Customizado",
     "11": "Assets:Ativo-Circulante-Custom",
     "2": "Liabilities:Custom"
 }
-
-mapper = AccountMapper(classificacao_customizada=classificacao_custom)
+mapper = AccountMapper(classificacao_custom)
 ```
 
 ## Validações e Integridade
@@ -306,9 +400,10 @@ python -m unittest test.export.excel_exporter_test
 ## Classes Principais
 
 ### Core
-- **`AccountClassifier`** - Classificação de contas em categorias Beancount
-- **`AccountMapper`** - Mapeamento completo de planos de contas
-- **`TipoPlanoContas`** - Enum para modelos de classificação
+- **`AccountClassifier`** - Classificação de contas em categorias Beancount baseado em CLAS_CTA
+- **`AccountMapper`** - Mapeamento completo de planos de contas (usa AccountClassifier internamente)
+- **`obter_classificacao_do_modelo()`** - Função helper para obter dicionário de classificação baseado no modelo
+- **`TipoPlanoContas`** - Enum para modelos de classificação (PADRAO, SIMPLIFICADO, IFRS)
 
 ### Data
 - **`ContabilDBClient`** - Cliente ODBC para acesso ao banco de dados

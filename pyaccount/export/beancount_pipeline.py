@@ -27,10 +27,9 @@ import pandas as pd
 from dateutil.parser import isoparse
 
 from pyaccount.data.db_client import ContabilDBClient
-from pyaccount.core.account_classifier import AccountClassifier
+from pyaccount.core.account_classifier import AccountClassifier, TipoPlanoContas, obter_classificacao_do_modelo
 from pyaccount.core.account_mapper import AccountMapper
 from pyaccount.export.exporters import BeancountExporter
-from pyaccount.core.utils import normalizar_nome, format_val, fmt_amount
 
 
 class BeancountPipeline:
@@ -61,6 +60,7 @@ class BeancountPipeline:
     abrir_equity_abertura: str = "Equity:Abertura",
         saldos_path: Optional[str] = None,
         classificacao_customizada: Optional[Dict[str, str]] = None,
+        modelo: Optional[TipoPlanoContas] = None,
         desconsiderar_zeramento: bool = True,
     ):
         """
@@ -80,6 +80,9 @@ class BeancountPipeline:
             saldos_path: Caminho opcional para CSV de saldos de abertura (cache)
             classificacao_customizada: Dicionário opcional com mapeamento customizado
                                       de prefixos CLAS_CTA para categorias Beancount
+            modelo: Tipo de plano de contas a usar (TipoPlanoContas.PADRAO_BR, SIMPLIFICADO, IFRS).
+                    Se None, usa CLASSIFICACAO_PADRAO_BR. Se classificacao_customizada for fornecido,
+                    tem prioridade sobre o modelo.
             desconsiderar_zeramento: Se True, exclui lançamentos com orig_lan = 2 (Zeramento)
         """
         self.db_client = ContabilDBClient(dsn, user, password)
@@ -92,10 +95,14 @@ class BeancountPipeline:
         self.abrir_equity_abertura = abrir_equity_abertura
         self.saldos_path = saldos_path
         self.classificacao_customizada = classificacao_customizada
+        self.modelo = modelo
         self.desconsiderar_zeramento = desconsiderar_zeramento
         
+        # Obtém classificação baseada no modelo e customizações
+        classificacao = obter_classificacao_do_modelo(modelo, classificacao_customizada)
+        
         # Mapeador de contas (classe base compartilhada)
-        self.account_mapper = AccountMapper(classificacao_customizada)
+        self.account_mapper = AccountMapper(classificacao)
         
         # DataFrames internos
         self.df_pc: Optional[pd.DataFrame] = None

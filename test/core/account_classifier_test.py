@@ -14,6 +14,7 @@ sys.path.insert(0, project_root)
 
 from pyaccount.core.account_classifier import (
     AccountClassifier,
+    obter_classificacao_do_modelo,
     TipoPlanoContas,
     CLASSIFICACAO_PADRAO_BR,
     CLASSIFICACAO_SIMPLIFICADO,
@@ -220,7 +221,8 @@ outra_chave = valor
 
     def test_modelo_padrao(self):
         """Testa uso do modelo padrão."""
-        classifier = AccountClassifier(modelo=TipoPlanoContas.PADRAO)
+        classificacao = obter_classificacao_do_modelo(TipoPlanoContas.PADRAO)
+        classifier = AccountClassifier(classificacao)
         
         self.assertEqual(classifier.mapeamento, CLASSIFICACAO_PADRAO_BR)
         self.assertEqual(classifier.classificar("11"), "Assets:Ativo-Circulante")
@@ -228,7 +230,8 @@ outra_chave = valor
 
     def test_modelo_simplificado(self):
         """Testa uso do modelo simplificado."""
-        classifier = AccountClassifier(modelo=TipoPlanoContas.SIMPLIFICADO)
+        classificacao = obter_classificacao_do_modelo(TipoPlanoContas.SIMPLIFICADO)
+        classifier = AccountClassifier(classificacao)
         
         self.assertEqual(classifier.mapeamento, CLASSIFICACAO_SIMPLIFICADO)
         self.assertEqual(classifier.classificar("1"), "Assets:Ativo")
@@ -239,7 +242,8 @@ outra_chave = valor
 
     def test_modelo_ifrs(self):
         """Testa uso do modelo IFRS."""
-        classifier = AccountClassifier(modelo=TipoPlanoContas.IFRS)
+        classificacao = obter_classificacao_do_modelo(TipoPlanoContas.IFRS)
+        classifier = AccountClassifier(classificacao)
         
         self.assertEqual(classifier.mapeamento, CLASSIFICACAO_IFRS)
         self.assertEqual(classifier.classificar("1"), "Assets")
@@ -250,8 +254,9 @@ outra_chave = valor
         self.assertEqual(classifier.classificar("22"), "Liabilities:Non-Current")
 
     def test_criar_com_modelo(self):
-        """Testa factory method criar_com_modelo."""
-        classifier = AccountClassifier.criar_com_modelo(TipoPlanoContas.SIMPLIFICADO)
+        """Testa criação de classifier usando obter_classificacao_do_modelo."""
+        classificacao = obter_classificacao_do_modelo(TipoPlanoContas.SIMPLIFICADO)
+        classifier = AccountClassifier(classificacao)
         
         self.assertEqual(classifier.mapeamento, CLASSIFICACAO_SIMPLIFICADO)
         self.assertEqual(classifier.classificar("1"), "Assets:Ativo")
@@ -269,13 +274,12 @@ outra_chave = valor
     def test_prioridade_customizado_sobre_modelo(self):
         """Testa que mapeamento customizado tem prioridade sobre modelo."""
         custom = {"1": "Assets:Custom"}
-        classifier = AccountClassifier(
-            mapeamento_customizado=custom,
-            modelo=TipoPlanoContas.SIMPLIFICADO
-        )
+        # Usa obter_classificacao_do_modelo com customizações
+        classificacao = obter_classificacao_do_modelo(TipoPlanoContas.SIMPLIFICADO, custom)
+        classifier = AccountClassifier(classificacao)
         
         # Deve usar o customizado, não o modelo
-        self.assertEqual(classifier.mapeamento, custom)
+        self.assertEqual(classifier.mapeamento["1"], "Assets:Custom")
         self.assertEqual(classifier.classificar("1"), "Assets:Custom")
 
 

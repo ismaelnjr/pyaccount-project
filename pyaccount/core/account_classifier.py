@@ -140,6 +140,34 @@ MODELOS_CLASSIFICACAO: Dict[TipoPlanoContas, Dict[str, str]] = {
     TipoPlanoContas.IFRS: CLASSIFICACAO_IFRS,
 }
 
+
+def obter_classificacao_do_modelo(
+    modelo: Optional[TipoPlanoContas] = None,
+    customizacoes: Optional[Dict[str, str]] = None
+) -> Dict[str, str]:
+    """
+    Obtém o dicionário de classificação baseado no modelo, aplicando customizações se fornecidas.
+    
+    Args:
+        modelo: Tipo de plano de contas. Se None, usa CLASSIFICACAO_PADRAO_BR.
+        customizacoes: Dicionário opcional com customizações. Se fornecido, sobrescreve valores do modelo.
+    
+    Returns:
+        Dicionário de classificação final (modelo + customizações)
+    """
+    # Determina o dicionário base
+    if modelo and modelo in MODELOS_CLASSIFICACAO:
+        classificacao = MODELOS_CLASSIFICACAO[modelo].copy()
+    else:
+        classificacao = CLASSIFICACAO_PADRAO_BR.copy()
+    
+    # Aplica customizações se houver (têm prioridade)
+    if customizacoes:
+        classificacao.update(customizacoes)
+    
+    return classificacao
+
+
 class AccountClassifier:
     """
     Classificador de contas contábeis em categorias Beancount.
@@ -150,21 +178,17 @@ class AccountClassifier:
     
     def __init__(
         self, 
-        mapeamento_customizado: Optional[Dict[str, str]] = None,
-        modelo: Optional[TipoPlanoContas] = None
+        mapeamento_customizado: Optional[Dict[str, str]] = None
     ):
         """
         Inicializa o classificador.
         
         Args:
-            mapeamento_customizado: Dicionário opcional com prefixos e categorias Beancount customizados.
-                                   Se fornecido, tem prioridade sobre o modelo.
-            modelo: Tipo de plano de contas a usar. Se None, usa CLASSIFICACAO_PADRAO.
+            mapeamento_customizado: Dicionário com prefixos e categorias Beancount.
+                                   Se None, usa CLASSIFICACAO_PADRAO_BR.
         """
         if mapeamento_customizado:
             self.mapeamento = mapeamento_customizado
-        elif modelo and modelo in MODELOS_CLASSIFICACAO:
-            self.mapeamento = MODELOS_CLASSIFICACAO[modelo]
         else:
             self.mapeamento = CLASSIFICACAO_PADRAO_BR
         
@@ -244,19 +268,6 @@ class AccountClassifier:
                 mapeamento[prefixo] = valor.strip()
         
         return cls(mapeamento) if mapeamento else None
-    
-    @classmethod
-    def criar_com_modelo(cls, modelo: TipoPlanoContas) -> 'AccountClassifier':
-        """
-        Factory method para criar classifier com modelo específico.
-        
-        Args:
-            modelo: Tipo de plano de contas
-            
-        Returns:
-            Instância de AccountClassifier com o modelo especificado
-        """
-        return cls(modelo=modelo)
     
     @classmethod
     def obter_modelos_disponiveis(cls) -> List[TipoPlanoContas]:

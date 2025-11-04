@@ -12,6 +12,7 @@ os.chdir(test_dir)  # muda para test/ para que caminhos relativos funcionem
 sys.path.insert(0, project_root)
 
 from pyaccount import BeancountPipeline, OpeningBalancesBuilder
+from pyaccount.core.account_classifier import TipoPlanoContas
 from datetime import date, timedelta
 from dateutil.parser import parse as parse_date
 
@@ -20,9 +21,9 @@ class TestBeancountPipeline(unittest.TestCase):
     def test_beancount_pipeline(self):
         """Testa geração de arquivo Beancount para um período específico."""
         
-        empresa = 437
-        inicio_periodo = date(2024, 1, 1)
-        fim_periodo = date(2024, 12, 31)
+        empresa = 267
+        inicio_periodo = date(2025, 1, 1)
+        fim_periodo = date(2025, 12, 31)
         dia_anterior = inicio_periodo - timedelta(days=1)  
         
         # Passo 1: Gera saldos de abertura em 
@@ -33,7 +34,9 @@ class TestBeancountPipeline(unittest.TestCase):
             password="consulta",
             empresa=empresa,
             ate=dia_anterior,
-            saida="./out"
+            saida="./out",
+            modelo=TipoPlanoContas.SIMPLIFICADO,
+            
         )
         saldos_abertura_path = builder_saldos.execute()
         print(f"✓ Saldos de abertura gerados: {saldos_abertura_path}")
@@ -52,7 +55,8 @@ class TestBeancountPipeline(unittest.TestCase):
             fim=fim_periodo,
             moeda="BRL",
             outdir="./out",
-            saldos_path=str(saldos_abertura_path)
+            saldos_path=str(saldos_abertura_path),
+            modelo=TipoPlanoContas.SIMPLIFICADO,
         )
         bean_path = pipeline.execute()
         print(f"✓ Arquivo Beancount gerado: {bean_path}")

@@ -8,7 +8,7 @@ Classe base compartilhada para processamento de planos de contas e mapeamento.
 from typing import Dict, Optional
 import pandas as pd
 
-from pyaccount.core.account_classifier import AccountClassifier, TipoPlanoContas
+from pyaccount.core.account_classifier import AccountClassifier
 from pyaccount.core.utils import normalizar_nome
 
 
@@ -25,8 +25,7 @@ class AccountMapper:
     
     def __init__(
         self, 
-        classificacao_customizada: Optional[Dict[str, str]] = None,
-        modelo: Optional[TipoPlanoContas] = None
+        classificacao_customizada: Optional[Dict[str, str]] = None
     ):
         """
         Inicializa o mapeador de contas.
@@ -34,12 +33,10 @@ class AccountMapper:
         Args:
             classificacao_customizada: Dicionário opcional com mapeamento customizado
                                       de prefixos CLAS_CTA para categorias Beancount.
-                                      Se fornecido, tem prioridade sobre o modelo.
-            modelo: Tipo de plano de contas a usar. Se None, usa CLASSIFICACAO_PADRAO.
+                                      Se None, usa CLASSIFICACAO_PADRAO_BR.
         """
-        self.classifier = AccountClassifier(classificacao_customizada, modelo)
+        self.classifier = AccountClassifier(classificacao_customizada)
         self.custom_classifier = classificacao_customizada
-        self.modelo = modelo
     
     def classificar_beancount(self, clas_cta: str, tipo_cta: Optional[str] = None) -> str:
         """
