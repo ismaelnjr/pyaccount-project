@@ -44,7 +44,8 @@ class TestExcelExporter(unittest.TestCase):
                 empresa=empresa,
                 inicio=inicio_periodo,
                 fim=fim_periodo,
-                modelo=TipoPlanoContas.SIMPLIFICADO
+                modelo=TipoPlanoContas.SIMPLIFICADO,
+                agrupamento_periodo="trimestral"
             )
             
             # Exporta para Excel

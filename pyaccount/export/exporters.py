@@ -11,6 +11,7 @@ from pathlib import Path
 from datetime import date, timedelta
 from typing import Dict, Optional, List
 import sys
+import re
 
 import pandas as pd
 from openpyxl import Workbook
@@ -262,6 +263,7 @@ class ExcelExporter:
         classificacao_customizada: Optional[Dict[str, str]] = None,
         modelo: Optional[TipoPlanoContas] = None,
         desconsiderar_zeramento: bool = True,
+        agrupamento_periodo: Optional[str] = None,
     ):
         """
         Inicializa o exportador Excel.
@@ -276,7 +278,16 @@ class ExcelExporter:
                                       Se fornecido, tem prioridade sobre o modelo.
             modelo: Tipo de plano de contas a usar. Se None, usa CLASSIFICACAO_PADRAO.
             desconsiderar_zeramento: Se True, exclui lançamentos com orig_lan = 2 (Zeramento)
+            agrupamento_periodo: Tipo de agrupamento por período na DRE. Valores aceitos:
+                                None (sem agrupamento), "mensal" ou "trimestral"
         """
+        # Valida agrupamento_periodo
+        if agrupamento_periodo is not None and agrupamento_periodo not in ["mensal", "trimestral"]:
+            raise ValueError(
+                f"agrupamento_periodo deve ser None, 'mensal' ou 'trimestral'. "
+                f"Recebido: {agrupamento_periodo}"
+            )
+        
         self.db_client = db_client
         self.empresa = empresa
         self.inicio = inicio
@@ -284,6 +295,7 @@ class ExcelExporter:
         self.classificacao_customizada = classificacao_customizada
         self.modelo = modelo
         self.desconsiderar_zeramento = desconsiderar_zeramento
+        self.agrupamento_periodo = agrupamento_periodo
         
         # Mapeador de contas (classe base compartilhada)
         self.account_mapper = AccountMapper(classificacao_customizada, modelo)
@@ -295,6 +307,23 @@ class ExcelExporter:
         self.df_movimentacoes: Optional[pd.DataFrame] = None
         self.df_lancamentos: Optional[pd.DataFrame] = None
         self.mapa_codi_to_bc: Dict[str, str] = {}
+    
+    def _criar_mapa_tipo_conta(self) -> Dict[str, str]:
+        """
+        Cria mapa de código da conta -> TIPO_CTA a partir do plano de contas.
+        
+        Returns:
+            Dicionário mapeando código da conta (str) -> TIPO_CTA ("S" ou "A")
+        """
+        mapa = {}
+        if self.df_pc is not None and not self.df_pc.empty:
+            if "CODI_CTA" in self.df_pc.columns and "TIPO_CTA" in self.df_pc.columns:
+                for _, row in self.df_pc.iterrows():
+                    codi_cta = str(row["CODI_CTA"]).strip()
+                    tipo_cta = str(row["TIPO_CTA"]).strip() if pd.notna(row["TIPO_CTA"]) else ""
+                    if codi_cta and tipo_cta:
+                        mapa[codi_cta] = tipo_cta
+        return mapa
     
     def classificar_beancount(self, clas_cta: str, tipo_cta: Optional[str] = None) -> str:
         """Mapeia CLAS_CTA -> grupo Beancount."""
@@ -353,6 +382,81 @@ class ExcelExporter:
         self.df_movimentacoes = df_mov
         return df_mov
     
+    def _calcular_movimentacoes_por_periodo(self) -> pd.DataFrame:
+        """
+        Calcula movimentações por conta e período (mensal ou trimestral).
+        
+        Returns:
+            DataFrame com colunas: conta, periodo, movimento
+        """
+        # Busca lançamentos detalhados do período
+        df_lanc = self.db_client.buscar_lancamentos_periodo(self.empresa, self.inicio, self.fim)
+        
+        # Filtra zeramentos se solicitado
+        if self.desconsiderar_zeramento and "orig_lan" in df_lanc.columns:
+            df_lanc = df_lanc[df_lanc["orig_lan"] != 2].copy()
+        
+        if df_lanc.empty:
+            return pd.DataFrame(columns=["conta", "periodo", "movimento"])
+        
+        # Converte data_lan para datetime se necessário
+        if not pd.api.types.is_datetime64_any_dtype(df_lanc["data_lan"]):
+            df_lanc["data_lan"] = pd.to_datetime(df_lanc["data_lan"])
+        
+        # Calcula período baseado no tipo de agrupamento
+        if self.agrupamento_periodo == "mensal":
+            # Formato: "Jan/24", "Fev/24", etc.
+            df_lanc["periodo"] = df_lanc["data_lan"].dt.strftime("%b/%y").str.title()
+        elif self.agrupamento_periodo == "trimestral":
+            # Formato: "1T/24", "2T/24", etc.
+            df_lanc["trimestre"] = df_lanc["data_lan"].dt.quarter
+            df_lanc["ano"] = df_lanc["data_lan"].dt.strftime("%y")
+            df_lanc["periodo"] = df_lanc["trimestre"].astype(str) + "T/" + df_lanc["ano"]
+            df_lanc = df_lanc.drop(columns=["trimestre", "ano"], errors="ignore")
+        else:
+            # Não deveria chegar aqui, mas para segurança
+            df_lanc["periodo"] = "Total"
+        
+        # Prepara dados para cálculo de movimentações
+        # Débitos: valores positivos (aumentam saldo)
+        df_debitos = df_lanc[
+            (df_lanc["cdeb_lan"].astype(str).str.strip() != "0") &
+            (df_lanc["cdeb_lan"].notna())
+        ].copy()
+        
+        # Créditos: valores negativos (diminuem saldo)
+        df_creditos = df_lanc[
+            (df_lanc["ccre_lan"].astype(str).str.strip() != "0") &
+            (df_lanc["ccre_lan"].notna())
+        ].copy()
+        
+        # Converte contas para string
+        if not df_debitos.empty:
+            df_debitos["conta"] = df_debitos["cdeb_lan"].astype(str).str.strip()
+            df_debitos["movimento"] = df_debitos["vlor_lan"]
+        else:
+            df_debitos = pd.DataFrame(columns=["conta", "periodo", "movimento"])
+        
+        if not df_creditos.empty:
+            df_creditos["conta"] = df_creditos["ccre_lan"].astype(str).str.strip()
+            df_creditos["movimento"] = -df_creditos["vlor_lan"]  # Negativo para créditos
+        else:
+            df_creditos = pd.DataFrame(columns=["conta", "periodo", "movimento"])
+        
+        # Combina débitos e créditos
+        df_movimentos = pd.concat([
+            df_debitos[["conta", "periodo", "movimento"]],
+            df_creditos[["conta", "periodo", "movimento"]]
+        ], ignore_index=True)
+        
+        # Agrupa por conta e período
+        df_result = df_movimentos.groupby(["conta", "periodo"], as_index=False)["movimento"].sum()
+        
+        # Remove períodos com movimento zero
+        df_result = df_result[df_result["movimento"] != 0].copy()
+        
+        return df_result
+    
     def buscar_lancamentos_periodo(self) -> pd.DataFrame:
         """
         Busca lançamentos do período para aba de movimentação.
@@ -399,12 +503,29 @@ class ExcelExporter:
         Gera estrutura da DRE (Demonstração do Resultado do Exercício).
         
         Returns:
-            DataFrame com DRE estruturada
+            DataFrame com DRE estruturada. Se agrupamento_periodo estiver definido,
+            retorna DataFrame com colunas: Item + colunas dinâmicas por período + Total.
+            Caso contrário, retorna DataFrame com colunas: Item, Valor.
         """
         # Garante que o plano de contas está carregado
         if self.df_pc is None:
             self.buscar_plano_contas_com_saldos()
         
+        # Se há agrupamento por período, usa método específico
+        if self.agrupamento_periodo:
+            df_mov_por_periodo = self._calcular_movimentacoes_por_periodo()
+            if df_mov_por_periodo.empty:
+                return pd.DataFrame()
+            
+            builder = IncomeStatementBuilder(
+                df_mov_por_periodo,
+                self.df_pc,
+                self.account_mapper,
+                agrupamento_periodo=self.agrupamento_periodo
+            )
+            return builder.gerar()
+        
+        # Comportamento padrão (sem agrupamento)
         if self.df_movimentacoes is None:
             self.buscar_movimentacao_periodo()
         
@@ -447,7 +568,7 @@ class ExcelExporter:
         )
         return builder.gerar()
     
-    def _aplicar_formatacao(self, ws, num_cols: int, num_rows: int, coluna_codigo_texto: Optional[int] = None, colunas_texto: Optional[List[int]] = None):
+    def _aplicar_formatacao(self, ws, num_cols: int, num_rows: int, coluna_codigo_texto: Optional[int] = None, colunas_texto: Optional[List[int]] = None, mapa_tipo_conta: Optional[Dict[str, str]] = None):
         """
         Aplica formatação básica à planilha.
         
@@ -457,6 +578,7 @@ class ExcelExporter:
             num_rows: Número de linhas
             coluna_codigo_texto: Coluna que deve ser formatada como texto (sem formatação numérica) - deprecated, use colunas_texto
             colunas_texto: Lista de colunas (1-indexed) que devem ser formatadas como texto
+            mapa_tipo_conta: Dicionário mapeando código da conta (str) -> TIPO_CTA ("S" ou "A")
         """
         # Compatibilidade: se coluna_codigo_texto for fornecido, adiciona à lista
         if colunas_texto is None:
@@ -493,8 +615,51 @@ class ExcelExporter:
                     cell.font = Font(bold=True, size=11, color="FFFFFF")
                     cell.alignment = Alignment(horizontal="center", vertical="center")
                 elif cell.value and isinstance(cell.value, str):
-                    # Títulos e subtotais em negrito
-                    if any(keyword in str(cell.value).upper() for keyword in ["TOTAL", "ATIVO", "PASSIVO", "PATRIMÔNIO", "RECEITAS", "DESPESAS", "CUSTOS", "RESULTADO"]):
+                    valor_str = str(cell.value)
+                    deve_estar_negrito = False
+                    
+                    # Só verifica formatação em negrito para a primeira coluna (nome da conta/item)
+                    # Outras colunas (valores numéricos) não precisam dessa verificação
+                    if col == 1:
+                        # Verifica se é total ou subtotal (palavras-chave específicas)
+                        palavras_chave_totais = ["TOTAL", "ATIVO", "PASSIVO", "PATRIMÔNIO", "RECEITAS", "DESPESAS", "CUSTOS", "RESULTADO"]
+                        contem_palavra_chave = any(keyword in valor_str.upper() for keyword in palavras_chave_totais)
+                        
+                        # Tenta extrair código da conta entre parênteses
+                        match = re.search(r'\(([^)]+)\)', valor_str)
+                        codigo_conta = None
+                        if match:
+                            codigo_conta = match.group(1).strip()
+                        
+                        if contem_palavra_chave:
+                            # Contém palavras-chave de totais
+                            if codigo_conta:
+                                # Tem código entre parênteses - verifica TIPO_CTA
+                                if mapa_tipo_conta and codigo_conta in mapa_tipo_conta:
+                                    tipo_cta = mapa_tipo_conta[codigo_conta]
+                                    deve_estar_negrito = (tipo_cta == "S")  # Sintética = negrito
+                                else:
+                                    # Não encontrou no mapa - assume total/subtotal (negrito)
+                                    deve_estar_negrito = True
+                            else:
+                                # Não tem código - é total/subtotal (negrito)
+                                deve_estar_negrito = True
+                        else:
+                            # Não contém palavras-chave de totais
+                            if codigo_conta:
+                                # Tem código entre parênteses - verifica TIPO_CTA
+                                if mapa_tipo_conta and codigo_conta in mapa_tipo_conta:
+                                    tipo_cta = mapa_tipo_conta[codigo_conta]
+                                    deve_estar_negrito = (tipo_cta == "S")  # Sintética = negrito
+                                else:
+                                    # Não encontrou no mapa - assume normal
+                                    deve_estar_negrito = False
+                            else:
+                                # Não tem código e não é total - assume normal
+                                deve_estar_negrito = False
+                    
+                    # Aplica formatação
+                    if deve_estar_negrito:
                         cell.font = font_subtitulo
                     else:
                         cell.font = font_normal
@@ -583,7 +748,9 @@ class ExcelExporter:
                     row["BC_ACCOUNT"]
                 ])
             
-            self._aplicar_formatacao(ws_pc, len(headers), len(df_pc_export) + 1, coluna_codigo_texto=1)
+            # Cria mapa de TIPO_CTA para formatação
+            mapa_tipo_conta = self._criar_mapa_tipo_conta()
+            self._aplicar_formatacao(ws_pc, len(headers), len(df_pc_export) + 1, coluna_codigo_texto=1, mapa_tipo_conta=mapa_tipo_conta)
         
         # Aba 2: Balanço Patrimonial
         df_bp = self.gerar_balanco_patrimonial()
@@ -595,19 +762,34 @@ class ExcelExporter:
             for _, row in df_bp.iterrows():
                 ws_bp.append([row["Conta/Categoria"], row["Saldo"]])
             
-            self._aplicar_formatacao(ws_bp, len(headers), len(df_bp) + 1)
+            # Cria mapa de TIPO_CTA para formatação
+            mapa_tipo_conta = self._criar_mapa_tipo_conta()
+            self._aplicar_formatacao(ws_bp, len(headers), len(df_bp) + 1, mapa_tipo_conta=mapa_tipo_conta)
         
         # Aba 3: DRE
         df_dre = self.gerar_dre()
         if not df_dre.empty:
             ws_dre = wb.create_sheet("DRE")
-            headers = ["Item", "Valor"]
+            
+            # Cabeçalhos dinâmicos baseados nas colunas do DataFrame
+            headers = df_dre.columns.tolist()
             ws_dre.append(headers)
             
+            # Dados
             for _, row in df_dre.iterrows():
-                ws_dre.append([row["Item"], row["Valor"]])
+                linha = []
+                for col in headers:
+                    valor = row.get(col)
+                    linha.append(valor)
+                ws_dre.append(linha)
             
-            self._aplicar_formatacao(ws_dre, len(headers), len(df_dre) + 1)
+            # Identifica colunas numéricas (todas exceto "Item")
+            colunas_numericas = [i + 1 for i, col in enumerate(headers) if col != "Item"]
+            
+            # Cria mapa de TIPO_CTA para formatação
+            mapa_tipo_conta = self._criar_mapa_tipo_conta()
+            # Aplica formatação
+            self._aplicar_formatacao(ws_dre, len(headers), len(df_dre) + 1, colunas_texto=[1], mapa_tipo_conta=mapa_tipo_conta)
         
         # Aba 4: Movimentação do Período
         if self.df_lancamentos is not None and not self.df_lancamentos.empty:
@@ -661,7 +843,9 @@ class ExcelExporter:
                 
                 # Colunas de texto: 2 (Código Débito), 4 (Código Crédito), 7 (Documento), 8 (Lote)
                 colunas_texto = [2, 4, 7, 8]
-                self._aplicar_formatacao(ws_mov, len(headers), len(df_mov_export) + 1, colunas_texto=colunas_texto)
+                # Cria mapa de TIPO_CTA para formatação
+                mapa_tipo_conta = self._criar_mapa_tipo_conta()
+                self._aplicar_formatacao(ws_mov, len(headers), len(df_mov_export) + 1, colunas_texto=colunas_texto, mapa_tipo_conta=mapa_tipo_conta)
         
         # Aba 5: Balancete
         df_balancete = self.gerar_balancete()
@@ -683,7 +867,9 @@ class ExcelExporter:
                     row["Saldo Final"]
                 ])
             
-            self._aplicar_formatacao(ws_balancete, len(headers), len(df_balancete) + 1, coluna_codigo_texto=1)
+            # Cria mapa de TIPO_CTA para formatação
+            mapa_tipo_conta = self._criar_mapa_tipo_conta()
+            self._aplicar_formatacao(ws_balancete, len(headers), len(df_balancete) + 1, coluna_codigo_texto=1, mapa_tipo_conta=mapa_tipo_conta)
         
         # Salva arquivo
         wb.save(excel_path)

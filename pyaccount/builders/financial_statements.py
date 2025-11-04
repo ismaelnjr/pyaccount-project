@@ -9,7 +9,7 @@ Classes base para construção de:
 - DRE (Demonstração do Resultado do Exercício)
 - Extrato/Movimentação do Período
 """
-from typing import Optional
+from typing import Optional, List, Dict
 import sys
 import pandas as pd
 
@@ -262,30 +262,42 @@ class IncomeStatementBuilder:
         self,
         df_movimentacoes: pd.DataFrame,
         df_plano_contas: pd.DataFrame,
-        account_mapper: AccountMapper
+        account_mapper: AccountMapper,
+        agrupamento_periodo: Optional[str] = None
     ):
         """
         Inicializa o construtor de DRE.
         
         Args:
-            df_movimentacoes: DataFrame com movimentações do período (deve ter colunas: conta, movimento)
+            df_movimentacoes: DataFrame com movimentações do período.
+                             Se agrupamento_periodo for None: deve ter colunas (conta, movimento).
+                             Se agrupamento_periodo for especificado: deve ter colunas (conta, periodo, movimento).
             df_plano_contas: DataFrame com plano de contas (deve ter colunas: CODI_CTA, CLAS_CTA, NOME_CTA, BC_GROUP)
             account_mapper: Instância de AccountMapper para classificação
+            agrupamento_periodo: Tipo de agrupamento por período. Valores aceitos:
+                                None (sem agrupamento), "mensal" ou "trimestral"
         """
         self.df_movimentacoes = df_movimentacoes
         self.df_plano_contas = df_plano_contas
         self.account_mapper = account_mapper
+        self.agrupamento_periodo = agrupamento_periodo
     
     def gerar(self) -> pd.DataFrame:
         """
         Gera estrutura da DRE.
         
         Returns:
-            DataFrame com colunas: Item, Valor
+            Se agrupamento_periodo for None: DataFrame com colunas (Item, Valor)
+            Se agrupamento_periodo for especificado: DataFrame com colunas (Item + colunas dinâmicas por período + Total)
         """
         if self.df_movimentacoes is None or self.df_movimentacoes.empty:
             return pd.DataFrame()
         
+        # Se há agrupamento por período, usa método específico
+        if self.agrupamento_periodo:
+            return self._processar_dre_por_periodo()
+        
+        # Comportamento padrão (sem agrupamento)
         # Mescla movimentações com plano de contas
         df_dre = _FinancialStatementBase._merge_com_plano_contas(
             self.df_movimentacoes,
@@ -307,8 +319,12 @@ class IncomeStatementBuilder:
         linhas_dre = []
         
         # Income (Receitas) - mostra todas as receitas
+        # Receitas são creditadas (movimento negativo), mas na DRE devem aparecer POSITIVAS
         income = df_dre[df_dre["BC_GROUP"].str.startswith("Income", na=False)].copy()
         if not income.empty:
+            # Inverte sinal das receitas (de negativo para positivo)
+            income["movimento"] = -income["movimento"]
+            
             linhas_dre.append({"Item": "RECEITAS", "Valor": None})
             
             # Receitas Operacionais
@@ -364,15 +380,19 @@ class IncomeStatementBuilder:
             linhas_dre.append({"Item": "", "Valor": None})
         
         # Expenses (Custos e Despesas) - mostra todas as despesas
+        # Despesas são debitadas (movimento positivo), mas na DRE devem aparecer NEGATIVAS
         expenses = df_dre[df_dre["BC_GROUP"].str.startswith("Expenses", na=False)].copy()
         if not expenses.empty:
+            # Inverte sinal das despesas (de positivo para negativo)
+            expenses["movimento"] = -expenses["movimento"]
+            
             linhas_dre.append({"Item": "(-) CUSTOS E DESPESAS", "Valor": None})
             
             # Custos
             custos = expenses[expenses["BC_GROUP"].str.contains("Custos", na=False)]
             if not custos.empty:
-                total_custos = abs(custos["movimento"].sum())
-                linhas_dre.append({"Item": "  (-) Custos", "Valor": -total_custos})
+                total_custos = custos["movimento"].sum()
+                linhas_dre.append({"Item": "  (-) Custos", "Valor": total_custos})
                 for _, row in custos.iterrows():
                     nome_cta = str(row.get("NOME_CTA", "Conta desconhecida"))
                     conta = str(row.get("conta", ""))
@@ -380,14 +400,14 @@ class IncomeStatementBuilder:
                         "Item": f"    {nome_cta} ({conta})",
                         "Valor": row["movimento"]
                     })
-                linhas_dre.append({"Item": "  Total Custos", "Valor": -total_custos})
+                linhas_dre.append({"Item": "  Total Custos", "Valor": total_custos})
                 linhas_dre.append({"Item": "", "Valor": None})
             
             # Despesas Operacionais
             desp_op = expenses[expenses["BC_GROUP"].str.contains("Despesas-Operacionais", na=False)]
             if not desp_op.empty:
-                total_desp_op = abs(desp_op["movimento"].sum())
-                linhas_dre.append({"Item": "  (-) Despesas Operacionais", "Valor": -total_desp_op})
+                total_desp_op = desp_op["movimento"].sum()
+                linhas_dre.append({"Item": "  (-) Despesas Operacionais", "Valor": total_desp_op})
                 for _, row in desp_op.iterrows():
                     nome_cta = str(row.get("NOME_CTA", "Conta desconhecida"))
                     conta = str(row.get("conta", ""))
@@ -395,14 +415,14 @@ class IncomeStatementBuilder:
                         "Item": f"    {nome_cta} ({conta})",
                         "Valor": row["movimento"]
                     })
-                linhas_dre.append({"Item": "  Total Despesas Operacionais", "Valor": -total_desp_op})
+                linhas_dre.append({"Item": "  Total Despesas Operacionais", "Valor": total_desp_op})
                 linhas_dre.append({"Item": "", "Valor": None})
             
             # Despesas Financeiras
             desp_fin = expenses[expenses["BC_GROUP"].str.contains("Despesas-Financeiras", na=False)]
             if not desp_fin.empty:
-                total_desp_fin = abs(desp_fin["movimento"].sum())
-                linhas_dre.append({"Item": "  (-) Despesas Financeiras", "Valor": -total_desp_fin})
+                total_desp_fin = desp_fin["movimento"].sum()
+                linhas_dre.append({"Item": "  (-) Despesas Financeiras", "Valor": total_desp_fin})
                 for _, row in desp_fin.iterrows():
                     nome_cta = str(row.get("NOME_CTA", "Conta desconhecida"))
                     conta = str(row.get("conta", ""))
@@ -410,7 +430,7 @@ class IncomeStatementBuilder:
                         "Item": f"    {nome_cta} ({conta})",
                         "Valor": row["movimento"]
                     })
-                linhas_dre.append({"Item": "  Total Despesas Financeiras", "Valor": -total_desp_fin})
+                linhas_dre.append({"Item": "  Total Despesas Financeiras", "Valor": total_desp_fin})
                 linhas_dre.append({"Item": "", "Valor": None})
             
             # Outras Despesas
@@ -420,8 +440,8 @@ class IncomeStatementBuilder:
                 ~expenses["BC_GROUP"].str.contains("Despesas-Financeiras", na=False)
             ]
             if not outras_desp.empty:
-                total_outras_desp = abs(outras_desp["movimento"].sum())
-                linhas_dre.append({"Item": "  (-) Outras Despesas", "Valor": -total_outras_desp})
+                total_outras_desp = outras_desp["movimento"].sum()
+                linhas_dre.append({"Item": "  (-) Outras Despesas", "Valor": total_outras_desp})
                 for _, row in outras_desp.iterrows():
                     nome_cta = str(row.get("NOME_CTA", "Conta desconhecida"))
                     conta = str(row.get("conta", ""))
@@ -429,21 +449,276 @@ class IncomeStatementBuilder:
                         "Item": f"    {nome_cta} ({conta})",
                         "Valor": row["movimento"]
                     })
-                linhas_dre.append({"Item": "  Total Outras Despesas", "Valor": -total_outras_desp})
+                linhas_dre.append({"Item": "  Total Outras Despesas", "Valor": total_outras_desp})
                 linhas_dre.append({"Item": "", "Valor": None})
             
-            total_despesas = abs(expenses["movimento"].sum())
-            linhas_dre.append({"Item": "TOTAL DESPESAS", "Valor": -total_despesas})
+            total_despesas = expenses["movimento"].sum()
+            linhas_dre.append({"Item": "TOTAL DESPESAS", "Valor": total_despesas})
             linhas_dre.append({"Item": "", "Valor": None})
         
         # Resultado
         total_receitas_val = income["movimento"].sum() if not income.empty else 0
-        total_despesas_val = abs(expenses["movimento"].sum()) if not expenses.empty else 0
-        resultado = total_receitas_val - total_despesas_val
+        total_despesas_val = expenses["movimento"].sum() if not expenses.empty else 0
+        resultado = total_receitas_val + total_despesas_val  # Despesas já são negativas
         
         linhas_dre.append({"Item": "RESULTADO DO PERÍODO", "Valor": resultado})
         
         return pd.DataFrame(linhas_dre)
+    
+    def _processar_dre_por_periodo(self) -> pd.DataFrame:
+        """
+        Processa DRE com agrupamento por período.
+        
+        Returns:
+            DataFrame com colunas: Item + colunas dinâmicas por período + Total
+        """
+        # Mescla movimentações com plano de contas
+        df_dre = _FinancialStatementBase._merge_com_plano_contas(
+            self.df_movimentacoes,
+            self.df_plano_contas,
+            coluna_conta_df="conta",
+            coluna_conta_pc="CODI_CTA",
+            colunas_pc=["CODI_CTA", "CLAS_CTA", "NOME_CTA", "BC_GROUP"]
+        )
+        
+        # Preenche e classifica
+        df_dre = _FinancialStatementBase._preencher_e_classificar(
+            df_dre,
+            self.account_mapper
+        )
+        
+        # Debug: alerta sobre contas classificadas como Unknown
+        self._debug_unknown_accounts(df_dre)
+        
+        # Obtém lista ordenada de períodos (cronologicamente)
+        periodos_unicos = df_dre["periodo"].unique().tolist()
+        
+        # Ordena períodos cronologicamente
+        if self.agrupamento_periodo == "mensal":
+            # Ordena por data: converte "Jan/24" para datetime e ordena
+            periodos_com_data = []
+            for p in periodos_unicos:
+                try:
+                    # Tenta parsear como "Jan/24" -> adiciona "/01" para ter dia completo
+                    dt = pd.to_datetime(f"01/{p}", format="%d/%b/%y", errors="coerce")
+                    if pd.notna(dt):
+                        periodos_com_data.append((dt, p))
+                except:
+                    pass
+            # Ordena por data e extrai os períodos
+            periodos_com_data.sort(key=lambda x: x[0])
+            periodos = [p for _, p in periodos_com_data]
+            # Adiciona períodos que não foram parseados (mantém ordem original)
+            for p in periodos_unicos:
+                if p not in periodos:
+                    periodos.append(p)
+        elif self.agrupamento_periodo == "trimestral":
+            # Ordena por ano e trimestre: "1T/24" -> (ano=24, trimestre=1)
+            periodos_ordenados = sorted(
+                periodos_unicos,
+                key=lambda p: (
+                    int(p.split("/")[1]) if "/" in p else 0,  # Ano
+                    int(p.split("T/")[0]) if "T/" in p else 0  # Trimestre
+                ) if "/" in p and "T/" in p else (0, 0)
+            )
+            periodos = periodos_ordenados
+        else:
+            # Fallback: ordenação alfabética
+            periodos = sorted(periodos_unicos)
+        
+        # Cria pivot table: contas x períodos
+        df_pivot = df_dre.pivot_table(
+            index=["conta", "NOME_CTA", "BC_GROUP"],
+            columns="periodo",
+            values="movimento",
+            aggfunc="sum",
+            fill_value=0.0
+        ).reset_index()
+        
+        # Calcula total por conta
+        df_pivot["Total"] = df_pivot[periodos].sum(axis=1)
+        
+        # Remove contas com total zero
+        df_pivot = df_pivot[df_pivot["Total"] != 0].copy()
+        
+        linhas_dre = []
+        
+        # Income (Receitas) - mostra todas as receitas
+        # Receitas são creditadas (movimento negativo), mas na DRE devem aparecer POSITIVAS
+        income = df_pivot[df_pivot["BC_GROUP"].str.startswith("Income", na=False)].copy()
+        if not income.empty:
+            # Inverte sinal das receitas (de negativo para positivo)
+            for periodo in periodos:
+                income[periodo] = -income[periodo]
+            income["Total"] = -income["Total"]
+            
+            linhas_dre.append(self._criar_linha_titulo("RECEITAS", periodos))
+            
+            # Receitas Operacionais
+            rec_op = income[income["BC_GROUP"].str.contains("Operacionais", na=False)]
+            if not rec_op.empty:
+                total_rec_op = rec_op["Total"].sum()
+                linhas_dre.append(self._criar_linha_subtotal("  Receitas Operacionais", rec_op, periodos))
+                for _, row in rec_op.iterrows():
+                    nome_cta = str(row.get("NOME_CTA", "Conta desconhecida"))
+                    conta = str(row.get("conta", ""))
+                    linhas_dre.append(self._criar_linha_conta(f"    {nome_cta} ({conta})", row, periodos))
+                linhas_dre.append(self._criar_linha_subtotal("  Total Receitas Operacionais", rec_op, periodos))
+                linhas_dre.append(self._criar_linha_vazia(periodos))
+            
+            # Receitas Financeiras
+            rec_fin = income[income["BC_GROUP"].str.contains("Financeiras", na=False)]
+            if not rec_fin.empty:
+                linhas_dre.append(self._criar_linha_subtotal("  Receitas Financeiras", rec_fin, periodos))
+                for _, row in rec_fin.iterrows():
+                    nome_cta = str(row.get("NOME_CTA", "Conta desconhecida"))
+                    conta = str(row.get("conta", ""))
+                    linhas_dre.append(self._criar_linha_conta(f"    {nome_cta} ({conta})", row, periodos))
+                linhas_dre.append(self._criar_linha_subtotal("  Total Receitas Financeiras", rec_fin, periodos))
+                linhas_dre.append(self._criar_linha_vazia(periodos))
+            
+            # Outras Receitas
+            outras_rec = income[
+                ~income["BC_GROUP"].str.contains("Operacionais", na=False) &
+                ~income["BC_GROUP"].str.contains("Financeiras", na=False)
+            ]
+            if not outras_rec.empty:
+                linhas_dre.append(self._criar_linha_subtotal("  Outras Receitas", outras_rec, periodos))
+                for _, row in outras_rec.iterrows():
+                    nome_cta = str(row.get("NOME_CTA", "Conta desconhecida"))
+                    conta = str(row.get("conta", ""))
+                    linhas_dre.append(self._criar_linha_conta(f"    {nome_cta} ({conta})", row, periodos))
+                linhas_dre.append(self._criar_linha_subtotal("  Total Outras Receitas", outras_rec, periodos))
+                linhas_dre.append(self._criar_linha_vazia(periodos))
+            
+            total_receitas = income["Total"].sum()
+            linhas_dre.append(self._criar_linha_total("TOTAL RECEITAS", income, periodos))
+            linhas_dre.append(self._criar_linha_vazia(periodos))
+        
+        # Expenses (Custos e Despesas) - mostra todas as despesas
+        # Despesas são debitadas (movimento positivo), mas na DRE devem aparecer NEGATIVAS
+        expenses = df_pivot[df_pivot["BC_GROUP"].str.startswith("Expenses", na=False)].copy()
+        if not expenses.empty:
+            # Inverte sinal das despesas (de positivo para negativo)
+            for periodo in periodos:
+                expenses[periodo] = -expenses[periodo]
+            expenses["Total"] = -expenses["Total"]
+            
+            linhas_dre.append(self._criar_linha_titulo("(-) CUSTOS E DESPESAS", periodos))
+            
+            # Custos
+            custos = expenses[expenses["BC_GROUP"].str.contains("Custos", na=False)]
+            if not custos.empty:
+                linhas_dre.append(self._criar_linha_subtotal("  (-) Custos", custos, periodos))
+                for _, row in custos.iterrows():
+                    nome_cta = str(row.get("NOME_CTA", "Conta desconhecida"))
+                    conta = str(row.get("conta", ""))
+                    linhas_dre.append(self._criar_linha_conta(f"    {nome_cta} ({conta})", row, periodos))
+                linhas_dre.append(self._criar_linha_subtotal("  Total Custos", custos, periodos))
+                linhas_dre.append(self._criar_linha_vazia(periodos))
+            
+            # Despesas Operacionais
+            desp_op = expenses[expenses["BC_GROUP"].str.contains("Despesas-Operacionais", na=False)]
+            if not desp_op.empty:
+                linhas_dre.append(self._criar_linha_subtotal("  (-) Despesas Operacionais", desp_op, periodos))
+                for _, row in desp_op.iterrows():
+                    nome_cta = str(row.get("NOME_CTA", "Conta desconhecida"))
+                    conta = str(row.get("conta", ""))
+                    linhas_dre.append(self._criar_linha_conta(f"    {nome_cta} ({conta})", row, periodos))
+                linhas_dre.append(self._criar_linha_subtotal("  Total Despesas Operacionais", desp_op, periodos))
+                linhas_dre.append(self._criar_linha_vazia(periodos))
+            
+            # Despesas Financeiras
+            desp_fin = expenses[expenses["BC_GROUP"].str.contains("Despesas-Financeiras", na=False)]
+            if not desp_fin.empty:
+                linhas_dre.append(self._criar_linha_subtotal("  (-) Despesas Financeiras", desp_fin, periodos))
+                for _, row in desp_fin.iterrows():
+                    nome_cta = str(row.get("NOME_CTA", "Conta desconhecida"))
+                    conta = str(row.get("conta", ""))
+                    linhas_dre.append(self._criar_linha_conta(f"    {nome_cta} ({conta})", row, periodos))
+                linhas_dre.append(self._criar_linha_subtotal("  Total Despesas Financeiras", desp_fin, periodos))
+                linhas_dre.append(self._criar_linha_vazia(periodos))
+            
+            # Outras Despesas
+            outras_desp = expenses[
+                ~expenses["BC_GROUP"].str.contains("Custos", na=False) &
+                ~expenses["BC_GROUP"].str.contains("Despesas-Operacionais", na=False) &
+                ~expenses["BC_GROUP"].str.contains("Despesas-Financeiras", na=False)
+            ]
+            if not outras_desp.empty:
+                linhas_dre.append(self._criar_linha_subtotal("  (-) Outras Despesas", outras_desp, periodos))
+                for _, row in outras_desp.iterrows():
+                    nome_cta = str(row.get("NOME_CTA", "Conta desconhecida"))
+                    conta = str(row.get("conta", ""))
+                    linhas_dre.append(self._criar_linha_conta(f"    {nome_cta} ({conta})", row, periodos))
+                linhas_dre.append(self._criar_linha_subtotal("  Total Outras Despesas", outras_desp, periodos))
+                linhas_dre.append(self._criar_linha_vazia(periodos))
+            
+            total_despesas = expenses["Total"].sum()
+            linhas_dre.append(self._criar_linha_total("TOTAL DESPESAS", expenses, periodos))
+            linhas_dre.append(self._criar_linha_vazia(periodos))
+        
+        # Resultado
+        total_receitas_val = income["Total"].sum() if not income.empty else 0
+        total_despesas_val = expenses["Total"].sum() if not expenses.empty else 0
+        resultado_total = total_receitas_val + total_despesas_val  # Despesas já são negativas
+        
+        # Calcula resultado por período
+        linha_resultado = {"Item": "RESULTADO DO PERÍODO"}
+        for periodo in periodos:
+            receita_periodo = income[periodo].sum() if not income.empty else 0.0
+            despesa_periodo = expenses[periodo].sum() if not expenses.empty else 0.0  # Já é negativo
+            linha_resultado[periodo] = receita_periodo + despesa_periodo  # Despesas já são negativas
+        linha_resultado["Total"] = resultado_total
+        linhas_dre.append(linha_resultado)
+        
+        # Cria DataFrame e garante ordem das colunas: Item + períodos + Total
+        df_result = pd.DataFrame(linhas_dre)
+        
+        # Garante que "Total" é a última coluna
+        colunas_ordenadas = ["Item"] + periodos + ["Total"]
+        # Filtra apenas colunas que existem no DataFrame
+        colunas_ordenadas = [c for c in colunas_ordenadas if c in df_result.columns]
+        
+        return df_result[colunas_ordenadas]
+    
+    def _criar_linha_titulo(self, titulo: str, periodos: List[str]) -> Dict:
+        """Cria linha de título sem valores."""
+        linha = {"Item": titulo}
+        for periodo in periodos:
+            linha[periodo] = None
+        linha["Total"] = None
+        return linha
+    
+    def _criar_linha_vazia(self, periodos: List[str]) -> Dict:
+        """Cria linha vazia."""
+        linha = {"Item": ""}
+        for periodo in periodos:
+            linha[periodo] = None
+        linha["Total"] = None
+        return linha
+    
+    def _criar_linha_subtotal(self, item: str, df: pd.DataFrame, periodos: List[str], negativar: bool = False) -> Dict:
+        """Cria linha de subtotal."""
+        linha = {"Item": item}
+        for periodo in periodos:
+            valor = df[periodo].sum()
+            linha[periodo] = valor
+        total = df["Total"].sum()
+        linha["Total"] = total
+        return linha
+    
+    def _criar_linha_total(self, item: str, df: pd.DataFrame, periodos: List[str], negativar: bool = False) -> Dict:
+        """Cria linha de total."""
+        return self._criar_linha_subtotal(item, df, periodos, negativar)
+    
+    def _criar_linha_conta(self, item: str, row: pd.Series, periodos: List[str]) -> Dict:
+        """Cria linha de conta individual."""
+        linha = {"Item": item}
+        for periodo in periodos:
+            linha[periodo] = row.get(periodo, 0.0)
+        linha["Total"] = row.get("Total", 0.0)
+        return linha
     
     def _debug_unknown_accounts(self, df_dre: pd.DataFrame) -> None:
         """Alerta sobre contas classificadas como Unknown."""
