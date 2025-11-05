@@ -12,21 +12,31 @@ os.chdir(test_dir)  # muda para test/ para que caminhos relativos funcionem
 sys.path.insert(0, project_root)
 
 from pyaccount import OpeningBalancesBuilder
-from datetime import date
+from datetime import date, timedelta
+from test.test_config import carregar_config_teste
 
 class TestPlanoContas(unittest.TestCase):
 
     def test_buscar_plano_contas(self):
         """Testa recuperação e exportação do plano de contas em CSV."""
         
+        # Carrega configurações do config.ini
+        config = carregar_config_teste()
+        
+        # Converte data_inicio do config de string para date
+        data_inicio = date.fromisoformat(config["data_inicio"]) if config["data_inicio"] else date(2025, 1, 1)
+        
+        # Calcula data para ate (dia anterior a data_inicio)
+        ate = data_inicio - timedelta(days=1)
+        
         # Cria o builder
         builder = OpeningBalancesBuilder(
-            dsn="Local_17",
-            user="consulta",
-            password="consulta",
-            empresa=437,
-            ate=date(2024, 12, 31),  # Data necessária para inicialização, mas não usada neste teste
-            saida="./out"
+            dsn=config["dsn"],
+            user=config["user"],
+            password=config["password"],
+            empresa=config["empresa"],
+            ate=ate,
+            saida=config["saida"]
         )
         
         try:
@@ -47,9 +57,9 @@ class TestPlanoContas(unittest.TestCase):
                 self.assertIn(col, df_plano_contas.columns, f"Coluna {col} não encontrada")
             
             # Define o caminho de saída
-            out_dir = Path("./out")
+            out_dir = Path(config["saida"])
             out_dir.mkdir(exist_ok=True)
-            out_path = out_dir / "plano_contas_437.csv"
+            out_path = out_dir / f"plano_contas_{config['empresa']}.csv"
             
             # Exporta para CSV
             df_plano_contas.to_csv(out_path, index=False, sep=";", encoding="utf-8-sig")

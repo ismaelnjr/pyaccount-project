@@ -15,27 +15,42 @@ from pyaccount import BeancountPipeline, OpeningBalancesBuilder
 from pyaccount.core.account_classifier import TipoPlanoContas
 from datetime import date, timedelta
 from dateutil.parser import parse as parse_date
+from test.test_config import carregar_config_teste
 
 class TestBeancountPipeline(unittest.TestCase):
 
     def test_beancount_pipeline(self):
         """Testa geração de arquivo Beancount para um período específico."""
         
-        empresa = 267
-        inicio_periodo = date(2025, 1, 1)
-        fim_periodo = date(2025, 12, 31)
+        # Carrega configurações do config.ini com override de empresa para 267
+        config = carregar_config_teste()
+        
+        empresa = config["empresa"]
+        # Converte datas do config de string para date
+        inicio_periodo = date.fromisoformat(config["data_inicio"]) 
+        fim_periodo = date.fromisoformat(config["data_fim"])
         dia_anterior = inicio_periodo - timedelta(days=1)  
+        
+        # Converte modelo do config para enum TipoPlanoContas
+        modelo_str = config["modelo"].lower()
+        modelo_enum = TipoPlanoContas.SIMPLIFICADO  # padrão
+        if modelo_str == "padrao":
+            modelo_enum = TipoPlanoContas.PADRAO
+        elif modelo_str == "simplificado":
+            modelo_enum = TipoPlanoContas.SIMPLIFICADO
+        elif modelo_str == "ifrs":
+            modelo_enum = TipoPlanoContas.IFRS
         
         # Passo 1: Gera saldos de abertura em 
         print(f"\n--- Passo 1: Gerando saldos de abertura em {dia_anterior} ---")
         builder_saldos = OpeningBalancesBuilder(
-            dsn="Local_17",
-            user="consulta",
-            password="consulta",
+            dsn=config["dsn"],
+            user=config["user"],
+            password=config["password"],
             empresa=empresa,
             ate=dia_anterior,
-            saida="./out",
-            modelo=TipoPlanoContas.SIMPLIFICADO,
+            saida=config["saida"],
+            modelo=modelo_enum,
             
         )
         saldos_abertura_path = builder_saldos.execute()
@@ -47,16 +62,16 @@ class TestBeancountPipeline(unittest.TestCase):
         # Passo 2: Gera arquivo Beancount usando saldos de abertura como cache
         print(f"\n--- Passo 2: Gerando arquivo Beancount para período {inicio_periodo} a {fim_periodo} ---")
         pipeline = BeancountPipeline(
-            dsn="Local_17",
-            user="consulta",
-            password="consulta",
+            dsn=config["dsn"],
+            user=config["user"],
+            password=config["password"],
             empresa=empresa,
             inicio=inicio_periodo,
             fim=fim_periodo,
-            moeda="BRL",
-            outdir="./out",
+            moeda=config["moeda"],
+            outdir=config["saida"],
             saldos_path=str(saldos_abertura_path),
-            modelo=TipoPlanoContas.SIMPLIFICADO,
+            modelo=modelo_enum,
         )
         bean_path = pipeline.execute()
         print(f"✓ Arquivo Beancount gerado: {bean_path}")
@@ -83,7 +98,7 @@ class TestBeancountPipeline(unittest.TestCase):
             print(f"  - Contém declarações open e transações")
         
         # Verifica mapa de contas CSV
-        mapa_path = Path("./out") / f"mapa_beancount_{empresa}.csv"
+        mapa_path = Path(config["saida"]) / f"mapa_beancount_{empresa}.csv"
         self.assertTrue(mapa_path.exists(), f"Arquivo mapa {mapa_path} não foi criado")
         print(f"✓ Mapa de contas gerado: {mapa_path.name}")
         df_mapa = pd.read_csv(mapa_path, sep=";", encoding="utf-8-sig")
@@ -94,7 +109,7 @@ class TestBeancountPipeline(unittest.TestCase):
         print(f"  - Mapa contém {len(df_mapa)} contas mapeadas")
         
         # Verifica balancete de abertura CSV
-        bal_abertura_path = Path("./out") / f"balancete_abertura_{empresa}_{dia_anterior}.csv"
+        bal_abertura_path = Path(config["saida"]) / f"balancete_abertura_{empresa}_{dia_anterior}.csv"
         self.assertTrue(bal_abertura_path.exists(), f"Arquivo balancete {bal_abertura_path} não foi criado")
         print(f"✓ Balancete de abertura gerado: {bal_abertura_path.name}")
         df_balancete = pd.read_csv(bal_abertura_path, sep=";", encoding="utf-8-sig")

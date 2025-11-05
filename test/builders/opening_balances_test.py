@@ -13,22 +13,33 @@ sys.path.insert(0, project_root)
 
 from pyaccount import OpeningBalancesBuilder
 from pyaccount.builders.opening_balances import carregar_saldos_iniciais_de_arquivo
-from datetime import date
+from datetime import date, timedelta
+from test.test_config import carregar_config_teste
 
 class TestBuildOpeningBalances(unittest.TestCase):
 
     def test_build_opening_balances(self):
-        """Testa geração de saldos em 31/12/2024 usando saldos de 31/12/2023 como abertura."""
+        """Testa geração de saldos usando saldos de abertura baseados em data_inicio do config."""
         
-        # Passo 1: Gera saldos iniciais em 31/12/2023
-        print("\n--- Passo 1: Gerando saldos de abertura em 31/12/2023 ---")
+        # Carrega configurações do config.ini
+        config = carregar_config_teste()
+        
+        # Converte datas do config de string para date
+        data_inicio = date.fromisoformat(config["data_inicio"]) if config["data_inicio"] else date(2025, 1, 1)
+        data_fim = date.fromisoformat(config["data_fim"]) if config["data_fim"] else date(2025, 12, 31)
+        
+        # Calcula data de abertura (dia anterior a data_inicio)
+        ate_abertura = data_inicio - timedelta(days=1)
+        
+        # Passo 1: Gera saldos iniciais no dia anterior a data_inicio
+        print(f"\n--- Passo 1: Gerando saldos de abertura em {ate_abertura} ---")
         builder_2023 = OpeningBalancesBuilder(
-            dsn="Local_17",
-            user="consulta",
-            password="consulta",
-            empresa=437,
-            ate=date(2023, 12, 31),
-            saida="./out"
+            dsn=config["dsn"],
+            user=config["user"],
+            password=config["password"],
+            empresa=config["empresa"],
+            ate=ate_abertura,
+            saida=config["saida"]
         )
         out_path_2023 = builder_2023.execute()
         print(f"✓ Saldos de abertura gerados: {out_path_2023}")
@@ -36,25 +47,25 @@ class TestBuildOpeningBalances(unittest.TestCase):
         # Verifica se o arquivo foi criado
         self.assertTrue(out_path_2023.exists(), f"Arquivo {out_path_2023} não foi criado")
         
-        # Passo 2: Carrega os saldos de 31/12/2023 como saldos iniciais
-        print("\n--- Passo 2: Carregando saldos de abertura para cálculo de 31/12/2024 ---")
+        # Passo 2: Carrega os saldos de abertura como saldos iniciais
+        print(f"\n--- Passo 2: Carregando saldos de abertura para cálculo até {data_fim} ---")
         saldos_abertura = carregar_saldos_iniciais_de_arquivo(out_path_2023)
         print(f"✓ Carregados {len(saldos_abertura)} contas com saldo de abertura")
         
         # Verifica se há saldos carregados
         self.assertGreater(len(saldos_abertura), 0, "Nenhum saldo de abertura foi carregado")
         
-        # Passo 3: Gera saldos finais em 31/12/2024 usando saldos de abertura + movimentações
-        print("\n--- Passo 3: Gerando saldos finais em 31/12/2024 (abertura + movimentações) ---")
+        # Passo 3: Gera saldos finais usando saldos de abertura + movimentações
+        print(f"\n--- Passo 3: Gerando saldos finais até {data_fim} (abertura + movimentações) ---")
         builder_2024 = OpeningBalancesBuilder(
-            dsn="Local_17",
-            user="consulta",
-            password="consulta",
-            empresa=437,
-            ate=date(2024, 12, 31),
-            saida="./out",
+            dsn=config["dsn"],
+            user=config["user"],
+            password=config["password"],
+            empresa=config["empresa"],
+            ate=data_fim,
+            saida=config["saida"],
             saldos_iniciais=saldos_abertura,
-            data_abertura=date(2023, 12, 31)
+            data_abertura=ate_abertura
         )
         out_path_2024 = builder_2024.execute()
         print(f"✓ Saldos finais gerados: {out_path_2024}")
@@ -76,8 +87,9 @@ class TestBuildOpeningBalances(unittest.TestCase):
             self.assertIn(col, df_resultado.columns, f"Coluna {col} não encontrada no resultado")
         
         # Verifica que data_corte está correta
-        self.assertEqual(df_resultado["data_corte"].iloc[0], "2024-12-31", 
-                        "Data de corte no resultado deve ser 2024-12-31")
+        data_fim_str = data_fim.strftime("%Y-%m-%d")
+        self.assertEqual(df_resultado["data_corte"].iloc[0], data_fim_str, 
+                        f"Data de corte no resultado deve ser {data_fim_str}")
         
         print(f"\n✓ Teste concluído com sucesso!")
         print(f"  - Saldos de abertura: {out_path_2023}")

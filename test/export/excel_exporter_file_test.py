@@ -14,6 +14,7 @@ sys.path.insert(0, project_root)
 from pyaccount import ExcelExporter, FileDataClient
 from pyaccount.core.account_classifier import TipoPlanoContas
 import pandas as pd
+from test.test_config import carregar_config_teste
 
 
 class TestExcelExporterFile(unittest.TestCase):
@@ -30,6 +31,9 @@ class TestExcelExporterFile(unittest.TestCase):
         
         if not saldos_file.exists() or not lancamentos_file.exists():
             self.skipTest("Arquivos CSV não encontrados em pyaccount/etc/")
+        
+        # Carrega configurações do config.ini como padrão
+        config = carregar_config_teste()
         
         print(f"\n--- Teste: Gerando arquivo Excel a partir de arquivos CSV ---")
         print(f"  - Diretório: {etc_dir}")
@@ -82,9 +86,10 @@ class TestExcelExporterFile(unittest.TestCase):
             print(f"  - Erro ao analisar arquivos: {e}")
             import traceback
             traceback.print_exc()
-            empresa = 267
-            inicio_periodo = date(2025, 1, 1)
-            fim_periodo = date(2025, 12, 31)
+            # Usa valores do config como fallback
+            empresa = config.get("empresa", 267)
+            inicio_periodo = date.fromisoformat(config["data_inicio"]) if config.get("data_inicio") else date(2025, 1, 1)
+            fim_periodo = date.fromisoformat(config["data_fim"]) if config.get("data_fim") else date(2025, 12, 31)
         
         print(f"  - Empresa: {empresa}")
         print(f"  - Período: {inicio_periodo} a {fim_periodo}")
@@ -100,21 +105,31 @@ class TestExcelExporterFile(unittest.TestCase):
         print("✓ FileDataClient criado")
         
         try:
+            # Converte modelo do config para enum TipoPlanoContas
+            modelo_str = config["modelo"].lower()
+            modelo_enum = TipoPlanoContas.SIMPLIFICADO  # padrão
+            if modelo_str == "padrao":
+                modelo_enum = TipoPlanoContas.PADRAO
+            elif modelo_str == "simplificado":
+                modelo_enum = TipoPlanoContas.SIMPLIFICADO
+            elif modelo_str == "ifrs":
+                modelo_enum = TipoPlanoContas.IFRS
+            
             # Cria exportador Excel com FileDataClient
             exporter = ExcelExporter(
                 data_client=file_client,
                 empresa=empresa,
                 inicio=inicio_periodo,
                 fim=fim_periodo,
-                modelo=TipoPlanoContas.SIMPLIFICADO,
-                agrupamento_periodo=None  # Sem agrupamento inicial
+                modelo=modelo_enum,
+                agrupamento_periodo=config["agrupamento_periodo"]
             )
             
             print("✓ ExcelExporter criado")
             
             # Exporta para Excel
             excel_path = exporter.exportar_excel(
-                outdir=Path("./out"),
+                outdir=Path(config["saida"]),
                 nome_arquivo=f"contabilidade_from_files_{empresa}_{inicio_periodo}_{fim_periodo}.xlsx"
             )
             

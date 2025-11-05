@@ -13,6 +13,7 @@ sys.path.insert(0, project_root)
 
 from pyaccount import ExcelExporter, ContabilDBClient
 from pyaccount.core.account_classifier import TipoPlanoContas
+from test.test_config import carregar_config_teste
 
 
 class TestExcelExporterODBC(unittest.TestCase):
@@ -20,17 +21,21 @@ class TestExcelExporterODBC(unittest.TestCase):
     def test_excel_export(self):
         """Testa geração de arquivo Excel com dados contábeis via ODBC."""
         
-        empresa = 267
-        inicio_periodo = date(2025, 1, 1)
-        fim_periodo = date(2025, 12, 31)
+        # Carrega configurações do config.ini com override de empresa para 267
+        config = carregar_config_teste(empresa=267)
+        
+        empresa = config["empresa"]
+        # Converte datas do config de string para date
+        inicio_periodo = date.fromisoformat(config["data_inicio"]) 
+        fim_periodo = date.fromisoformat(config["data_fim"])
         
         print(f"\n--- Teste: Gerando arquivo Excel para período {inicio_periodo} a {fim_periodo} ---")
         
         # Cria cliente de banco de dados
         db_client = ContabilDBClient(
-            dsn="Local_17",
-            user="consulta",
-            password="consulta"
+            dsn=config["dsn"],
+            user=config["user"],
+            password=config["password"]
         )
         
         try:
@@ -38,19 +43,29 @@ class TestExcelExporterODBC(unittest.TestCase):
             db_client.connect()
             print("✓ Conectado ao banco de dados")
             
+            # Converte modelo do config para enum TipoPlanoContas
+            modelo_str = config["modelo"].lower()
+            modelo_enum = TipoPlanoContas.SIMPLIFICADO  # padrão
+            if modelo_str == "padrao":
+                modelo_enum = TipoPlanoContas.PADRAO
+            elif modelo_str == "simplificado":
+                modelo_enum = TipoPlanoContas.SIMPLIFICADO
+            elif modelo_str == "ifrs":
+                modelo_enum = TipoPlanoContas.IFRS
+            
             # Cria exportador Excel
             exporter = ExcelExporter(
                 data_client=db_client,
                 empresa=empresa,
                 inicio=inicio_periodo,
                 fim=fim_periodo,
-                modelo=TipoPlanoContas.SIMPLIFICADO,
-                agrupamento_periodo="trimestral"
+                modelo=modelo_enum,
+                agrupamento_periodo=config["agrupamento_periodo"]
             )
             
             # Exporta para Excel
             excel_path = exporter.exportar_excel(
-                outdir=Path("./out"),
+                outdir=Path(config["saida"]),
                 nome_arquivo=f"contabilidade_{empresa}_{inicio_periodo}_{fim_periodo}.xlsx"
             )
             
