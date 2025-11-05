@@ -26,7 +26,7 @@ from typing import Optional, Dict
 import pandas as pd
 from dateutil.parser import isoparse
 
-from pyaccount.data.db_client import ContabilDBClient
+from pyaccount.data.client import DataClient
 from pyaccount.core.account_classifier import AccountClassifier, TipoPlanoContas, obter_classificacao_do_modelo
 from pyaccount.core.account_mapper import AccountMapper
 from pyaccount.export.exporters import BeancountExporter
@@ -48,16 +48,17 @@ class BeancountPipeline:
     
     def __init__(
         self,
-    dsn: str,
-    user: str,
-    password: str,
-    empresa: int,
-    inicio: date,
-    fim: date,
-    moeda: str,
-    outdir: Path,
-    somente_ativas: bool = False,
-    abrir_equity_abertura: str = "Equity:Abertura",
+        data_client: Optional[DataClient] = None,
+        dsn: Optional[str] = None,
+        user: Optional[str] = None,
+        password: Optional[str] = None,
+        empresa: int = None,
+        inicio: Optional[date] = None,
+        fim: Optional[date] = None,
+        moeda: str = "BRL",
+        outdir: Optional[Path] = None,
+        somente_ativas: bool = False,
+        abrir_equity_abertura: str = "Equity:Abertura",
         saldos_path: Optional[str] = None,
         classificacao_customizada: Optional[Dict[str, str]] = None,
         modelo: Optional[TipoPlanoContas] = None,
@@ -85,7 +86,14 @@ class BeancountPipeline:
                     tem prioridade sobre o modelo.
             desconsiderar_zeramento: Se True, exclui lançamentos com orig_lan = 2 (Zeramento)
         """
-        self.db_client = ContabilDBClient(dsn, user, password)
+        # Se data_client não foi fornecido, cria ContabilDBClient (compatibilidade retroativa)
+        if data_client is None:
+            if not all([dsn, user, password]):
+                raise ValueError("Forneça data_client OU (dsn, user, password)")
+            from pyaccount.data.clients import ContabilDBClient
+            self.data_client = ContabilDBClient(dsn, user, password)
+        else:
+            self.data_client = data_client
         self.empresa = empresa
         self.inicio = inicio
         self.fim = fim
@@ -131,7 +139,7 @@ class BeancountPipeline:
         Returns:
             DataFrame com plano de contas e mapeamento para Beancount
         """
-        df_pc = self.db_client.buscar_plano_contas(self.empresa)
+        df_pc = self.data_client.buscar_plano_contas(self.empresa)
         
         if df_pc.empty:
             raise RuntimeError("Plano de contas vazio para a empresa informada.")
@@ -187,7 +195,7 @@ class BeancountPipeline:
             df_saldos = df_saldos[["BC_ACCOUNT", "saldo"]].copy()
         else:
             # Busca saldos direto do banco até D-1
-            df_saldos = self.db_client.buscar_saldos(self.empresa, dia_anterior)
+            df_saldos = self.data_client.buscar_saldos(self.empresa, dia_anterior)
             
             if df_saldos.empty:
                 print("[aviso] Nenhum saldo histórico encontrado até D-1. Abertura ficará zerada.", file=sys.stderr)
@@ -208,7 +216,7 @@ class BeancountPipeline:
         Returns:
             DataFrame com lançamentos e mapeamento para contas Beancount
         """
-        df_lanc = self.db_client.buscar_lancamentos_periodo(self.empresa, self.inicio, self.fim)
+        df_lanc = self.data_client.buscar_lancamentos_periodo(self.empresa, self.inicio, self.fim)
         
         if df_lanc.empty:
             print("[aviso] Nenhum lançamento no período informado.", file=sys.stderr)
@@ -328,7 +336,7 @@ class BeancountPipeline:
         """
         try:
             # Conecta ao banco
-            self.db_client.connect()
+            self.data_client.connect()
             
             # Busca plano de contas e mapeia para Beancount
             self.buscar_plano_contas()
@@ -352,7 +360,7 @@ class BeancountPipeline:
             
         finally:
             # Sempre fecha a conexão
-            self.db_client.close()
+            self.data_client.close()
 
 
 def parse_date(s: str) -> date:

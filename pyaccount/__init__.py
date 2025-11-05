@@ -3,7 +3,7 @@ PyAccount - Ferramentas para importação de dados contábeis para Beancount.
 """
 
 # Imports de subpastas
-from pyaccount.data.db_client import ContabilDBClient
+from pyaccount.data import DataClient, ContabilDBClient, FileDataClient
 from pyaccount.export.beancount_pipeline import BeancountPipeline
 from pyaccount.core.account_classifier import (
     AccountClassifier,
@@ -20,7 +20,9 @@ from pyaccount.builders.opening_balances import OpeningBalancesBuilder
 from pyaccount.export.exporters import BeancountExporter, ExcelExporter
 
 __all__ = [
-    "ContabilDBClient", 
+    "DataClient",
+    "ContabilDBClient",
+    "FileDataClient",
     "OpeningBalancesBuilder",
     "BeancountPipeline",
     "ExcelExporter",

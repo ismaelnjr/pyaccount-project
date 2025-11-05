@@ -33,7 +33,7 @@ import sys
 import pandas as pd
 from dateutil.parser import isoparse
 
-from pyaccount.data.db_client import ContabilDBClient
+from pyaccount.data.client import DataClient
 from pyaccount.core.account_classifier import AccountClassifier, TipoPlanoContas, obter_classificacao_do_modelo
 from pyaccount.core.account_mapper import AccountMapper
 from pyaccount.builders.financial_statements import _FinancialStatementBase
@@ -54,12 +54,13 @@ class OpeningBalancesBuilder:
     
     def __init__(
         self, 
-        dsn: str, 
-        user: str, 
-        password: str, 
-        empresa: int, 
-        ate: date, 
-        saida: Path,
+        data_client: Optional[DataClient] = None,
+        dsn: Optional[str] = None, 
+        user: Optional[str] = None, 
+        password: Optional[str] = None, 
+        empresa: int = None, 
+        ate: Optional[date] = None, 
+        saida: Optional[Path] = None,
         classificacao_customizada: Optional[Dict[str, str]] = None,
         modelo: Optional[TipoPlanoContas] = None,
         saldos_iniciais: Optional[Union[Dict[str, float], pd.DataFrame]] = None,
@@ -69,9 +70,10 @@ class OpeningBalancesBuilder:
         Inicializa o construtor de saldos iniciais.
         
         Args:
-            dsn: Nome do DSN ODBC
-            user: Usuário do banco de dados
-            password: Senha do banco de dados
+            data_client: Cliente de dados (DataClient). Se None, cria ContabilDBClient com dsn/user/password.
+            dsn: Nome do DSN ODBC (usado apenas se data_client não for fornecido)
+            user: Usuário do banco de dados (usado apenas se data_client não for fornecido)
+            password: Senha do banco de dados (usado apenas se data_client não for fornecido)
             empresa: Código da empresa
             ate: Data de corte (até quando calcular os saldos finais)
             saida: Diretório de saída dos arquivos
@@ -89,7 +91,14 @@ class OpeningBalancesBuilder:
             data_abertura: Data dos saldos iniciais (ex: 2023-12-31). Obrigatória se 
                           saldos_iniciais for fornecido. A data 'ate' deve ser maior que esta data.
         """
-        self.db_client = ContabilDBClient(dsn, user, password)
+        # Se data_client não foi fornecido, cria ContabilDBClient (compatibilidade retroativa)
+        if data_client is None:
+            if not all([dsn, user, password]):
+                raise ValueError("Forneça data_client OU (dsn, user, password)")
+            from pyaccount.data.clients import ContabilDBClient
+            self.data_client = ContabilDBClient(dsn, user, password)
+        else:
+            self.data_client = data_client
         self.empresa = empresa
         self.ate = ate
         self.saida = Path(saida)
@@ -207,7 +216,7 @@ class OpeningBalancesBuilder:
             DataFrame com plano de contas e mapeamento para Beancount
         """
         # Busca plano de contas usando o cliente de banco de dados
-        df_pc = self.db_client.buscar_plano_contas(self.empresa)
+        df_pc = self.data_client.buscar_plano_contas(self.empresa)
         
         # Processa plano de contas usando AccountMapper
         df_pc = self.account_mapper.processar_plano_contas(df_pc, filtrar_ativas=False)
@@ -235,7 +244,7 @@ class OpeningBalancesBuilder:
             # Busca movimentações do período entre data_abertura e ate
             # Período: data_abertura (exclusiva) até ate (inclusiva)
             # Ex: abertura em 31/12/2023, movimentações de 01/01/2024 a 31/01/2024
-            df_movimentacoes = self.db_client.buscar_movimentacoes_periodo(
+            df_movimentacoes = self.data_client.buscar_movimentacoes_periodo(
                 self.empresa, self.data_abertura, self.ate
             )
             
@@ -284,7 +293,7 @@ class OpeningBalancesBuilder:
                 df_saldos = df_saldos[["conta", "saldo"]].copy()
         else:
             # Busca saldos direto até 'ate' (comportamento original)
-            df_saldos = self.db_client.buscar_saldos(self.empresa, self.ate)
+            df_saldos = self.data_client.buscar_saldos(self.empresa, self.ate)
         
         self.df_saldos = df_saldos
         return df_saldos
@@ -354,7 +363,7 @@ class OpeningBalancesBuilder:
         
         try:
             # Conecta ao banco
-            self.db_client.connect()
+            self.data_client.connect()
             
             # Busca plano de contas
             self.buscar_plano_contas()
@@ -370,7 +379,7 @@ class OpeningBalancesBuilder:
             
         finally:
             # Sempre fecha a conexão
-            self.db_client.close()
+            self.data_client.close()
 
 
 # Funções utilitárias para CLI

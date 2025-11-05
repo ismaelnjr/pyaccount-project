@@ -18,7 +18,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 
-from pyaccount.data.db_client import ContabilDBClient
+from pyaccount.data.client import DataClient
 from pyaccount.core.account_classifier import AccountClassifier, TipoPlanoContas, obter_classificacao_do_modelo
 from pyaccount.core.account_mapper import AccountMapper
 from pyaccount.builders.financial_statements import (
@@ -256,7 +256,7 @@ class ExcelExporter:
     
     def __init__(
         self,
-        db_client: ContabilDBClient,
+        data_client: DataClient,
         empresa: int,
         inicio: date,
         fim: date,
@@ -269,7 +269,7 @@ class ExcelExporter:
         Inicializa o exportador Excel.
         
         Args:
-            db_client: Cliente de banco de dados
+            data_client: Cliente de dados (DataClient)
             empresa: Código da empresa
             inicio: Data inicial do período
             fim: Data final do período
@@ -288,7 +288,7 @@ class ExcelExporter:
                 f"Recebido: {agrupamento_periodo}"
             )
         
-        self.db_client = db_client
+        self.data_client = data_client
         self.empresa = empresa
         self.inicio = inicio
         self.fim = fim
@@ -340,7 +340,7 @@ class ExcelExporter:
             DataFrame com plano de contas e saldos finais
         """
         # Busca plano de contas
-        df_pc = self.db_client.buscar_plano_contas(self.empresa)
+        df_pc = self.data_client.buscar_plano_contas(self.empresa)
         
         if df_pc.empty:
             raise RuntimeError("Plano de contas vazio para a empresa informada.")
@@ -353,7 +353,7 @@ class ExcelExporter:
         self.mapa_codi_to_bc = mapas["codi_to_bc"]
         
         # Busca saldos finais
-        df_saldos = self.db_client.buscar_saldos(self.empresa, self.fim)
+        df_saldos = self.data_client.buscar_saldos(self.empresa, self.fim)
         
         # Mescla saldos ao plano de contas
         if not df_saldos.empty:
@@ -381,7 +381,7 @@ class ExcelExporter:
         Returns:
             DataFrame com movimentações agrupadas por conta
         """
-        df_mov = self.db_client.buscar_movimentacoes_periodo(self.empresa, self.inicio, self.fim)
+        df_mov = self.data_client.buscar_movimentacoes_periodo(self.empresa, self.inicio, self.fim)
         self.df_movimentacoes = df_mov
         return df_mov
     
@@ -393,7 +393,7 @@ class ExcelExporter:
             DataFrame com colunas: conta, periodo, movimento
         """
         # Busca lançamentos detalhados do período
-        df_lanc = self.db_client.buscar_lancamentos_periodo(self.empresa, self.inicio, self.fim)
+        df_lanc = self.data_client.buscar_lancamentos_periodo(self.empresa, self.inicio, self.fim)
         
         # Filtra zeramentos se solicitado
         if self.desconsiderar_zeramento and "orig_lan" in df_lanc.columns:
@@ -467,7 +467,7 @@ class ExcelExporter:
         Returns:
             DataFrame com lançamentos do período
         """
-        df_lanc = self.db_client.buscar_lancamentos_periodo(self.empresa, self.inicio, self.fim)
+        df_lanc = self.data_client.buscar_lancamentos_periodo(self.empresa, self.inicio, self.fim)
         
         # Filtra zeramentos se solicitado
         if self.desconsiderar_zeramento and "orig_lan" in df_lanc.columns:
@@ -557,7 +557,7 @@ class ExcelExporter:
         # Busca saldos iniciais (até D-1)
         dia_anterior = self.inicio - timedelta(days=1)
         if self.df_saldos_iniciais is None:
-            self.df_saldos_iniciais = self.db_client.buscar_saldos(self.empresa, dia_anterior)
+            self.df_saldos_iniciais = self.data_client.buscar_saldos(self.empresa, dia_anterior)
         
         # Busca lançamentos do período se ainda não foi carregado
         if self.df_lancamentos is None:
