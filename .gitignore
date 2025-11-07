@@ -45,3 +45,12 @@ out/
 **/out/
 test/out/
 
+# Banco de dados SQLite
+*.db
+contas.db
+
+# Logs
+logs/
+*.log
+queries.log
+
