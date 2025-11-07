@@ -275,9 +275,9 @@ class OpeningBalancesBuilder:
                 )
         
                 # Preenche NaN com 0
-                df_saldos["saldo"] = df_saldos["saldo"].fillna(0)
+                df_saldos["saldo"] = pd.to_numeric(df_saldos["saldo"], errors="coerce").fillna(0.0)
                 if "movimento" in df_saldos.columns:
-                    df_saldos["movimento"] = df_saldos["movimento"].fillna(0)
+                    df_saldos["movimento"] = pd.to_numeric(df_saldos["movimento"], errors="coerce").fillna(0.0)
                     # Calcula saldo final = saldo inicial + movimentações
                     df_saldos["saldo"] = df_saldos["saldo"] + df_saldos["movimento"]
                 

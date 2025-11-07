@@ -20,17 +20,17 @@ from test.test_config import carregar_config_teste
 class TestExcelExporterFile(unittest.TestCase):
 
     def test_excel_export_from_files(self):
-        """Testa geração de arquivo Excel utilizando arquivos CSV da pasta etc."""
+        """Testa geração de arquivo Excel utilizando arquivos CSV da pasta sample_data."""
         
-        # Caminho para pasta etc (relativo ao projeto)
-        etc_dir = Path(project_root) / "pyaccount" / "etc"
+        # Caminho para pasta sample_data (relativo ao projeto)
+        etc_dir = Path(project_root) / "sample_data"
         
         # Verifica se os arquivos existem
         saldos_file = etc_dir / "saldos_iniciais.CSV"
         lancamentos_file = etc_dir / "lancamentos.CSV"
         
         if not saldos_file.exists() or not lancamentos_file.exists():
-            self.skipTest("Arquivos CSV não encontrados em pyaccount/etc/")
+            self.skipTest("Arquivos CSV não encontrados em sample_data/")
         
         # Carrega configurações do config.ini como padrão
         config = carregar_config_teste()

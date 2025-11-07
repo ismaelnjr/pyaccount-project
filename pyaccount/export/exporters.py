@@ -279,12 +279,12 @@ class ExcelExporter:
             modelo: Tipo de plano de contas a usar. Se None, usa CLASSIFICACAO_PADRAO.
             desconsiderar_zeramento: Se True, exclui lançamentos com orig_lan = 2 (Zeramento)
             agrupamento_periodo: Tipo de agrupamento por período na DRE. Valores aceitos:
-                                None (sem agrupamento), "mensal" ou "trimestral"
+                                None (sem agrupamento), "anual", "mensal" ou "trimestral"
         """
         # Valida agrupamento_periodo
-        if agrupamento_periodo is not None and agrupamento_periodo not in ["mensal", "trimestral"]:
+        if agrupamento_periodo is not None and agrupamento_periodo not in ["anual", "mensal", "trimestral"]:
             raise ValueError(
-                f"agrupamento_periodo deve ser None, 'mensal' ou 'trimestral'. "
+                f"agrupamento_periodo deve ser None, 'anual', 'mensal' ou 'trimestral'. "
                 f"Recebido: {agrupamento_periodo}"
             )
         
@@ -365,7 +365,7 @@ class ExcelExporter:
                 right_on="conta",
                 how="left"
             )
-            df_pc["Saldo Final"] = df_pc["saldo"].fillna(0.0)
+            df_pc["Saldo Final"] = pd.to_numeric(df_pc["saldo"], errors="coerce").fillna(0.0)
             df_pc = df_pc.drop(columns=["conta_str", "conta", "saldo"], errors="ignore")
         else:
             df_pc["Saldo Final"] = 0.0
@@ -407,7 +407,10 @@ class ExcelExporter:
             df_lanc["data_lan"] = pd.to_datetime(df_lanc["data_lan"])
         
         # Calcula período baseado no tipo de agrupamento
-        if self.agrupamento_periodo == "mensal":
+        if self.agrupamento_periodo == "anual":
+            # Formato: "2024", "2025", etc.
+            df_lanc["periodo"] = df_lanc["data_lan"].dt.year.astype(str)
+        elif self.agrupamento_periodo == "mensal":
             # Formato: "Jan/24", "Fev/24", etc.
             df_lanc["periodo"] = df_lanc["data_lan"].dt.strftime("%b/%y").str.title()
         elif self.agrupamento_periodo == "trimestral":
@@ -417,7 +420,8 @@ class ExcelExporter:
             df_lanc["periodo"] = df_lanc["trimestre"].astype(str) + "T/" + df_lanc["ano"]
             df_lanc = df_lanc.drop(columns=["trimestre", "ano"], errors="ignore")
         else:
-            # Não deveria chegar aqui, mas para segurança
+            # Não deveria chegar aqui (este método só é chamado para anual/mensal/trimestral)
+            # Mas para segurança, define período como "Total"
             df_lanc["periodo"] = "Total"
         
         # Prepara dados para cálculo de movimentações
@@ -514,8 +518,8 @@ class ExcelExporter:
         if self.df_pc is None:
             self.buscar_plano_contas_com_saldos()
         
-        # Se há agrupamento por período, usa método específico
-        if self.agrupamento_periodo:
+        # Se há agrupamento por período (anual, mensal ou trimestral), usa método específico
+        if self.agrupamento_periodo in ["anual", "mensal", "trimestral"]:
             df_mov_por_periodo = self._calcular_movimentacoes_por_periodo()
             if df_mov_por_periodo.empty:
                 return pd.DataFrame()
@@ -528,7 +532,7 @@ class ExcelExporter:
             )
             return builder.gerar()
         
-        # Comportamento padrão (sem agrupamento)
+        # Comportamento padrão (sem agrupamento - None)
         if self.df_movimentacoes is None:
             self.buscar_movimentacao_periodo()
         
@@ -538,7 +542,8 @@ class ExcelExporter:
         builder = IncomeStatementBuilder(
             self.df_movimentacoes,
             self.df_pc,
-            self.account_mapper
+            self.account_mapper,
+            agrupamento_periodo=None  # Sem agrupamento
         )
         return builder.gerar()
     

@@ -12,6 +12,7 @@ import pyodbc
 import pandas as pd
 
 from pyaccount.data.client import DataClient
+from pyaccount.data.logging import log_query
 
 
 class ContabilDBClient(DataClient):
@@ -22,7 +23,7 @@ class ContabilDBClient(DataClient):
     para consultas específicas do sistema contábil.
     """
     
-    def __init__(self, dsn: str, user: str, password: str):
+    def __init__(self, dsn: str, user: str, password: str, enable_query_log: bool = False, query_log_file: str = "logs/queries.log"):
         """
         Inicializa o cliente de banco de dados.
         
@@ -30,10 +31,14 @@ class ContabilDBClient(DataClient):
             dsn: Nome do DSN ODBC
             user: Usuário do banco de dados
             password: Senha do banco de dados
+            enable_query_log: Se True, registra todas as queries SQL em arquivo de log
+            query_log_file: Caminho do arquivo de log (padrão: logs/queries.log)
         """
         self.dsn = dsn
         self.user = user
         self.password = password
+        self.enable_query_log = enable_query_log
+        self.query_log_file = query_log_file
         self.conn: Optional[pyodbc.Connection] = None
     
     def connect(self) -> None:
@@ -97,6 +102,8 @@ class ContabilDBClient(DataClient):
         WHERE CODI_EMP = ?
         """
         
+        if self.enable_query_log:
+            log_query(sql, [empresa], self.query_log_file)
         df = pd.read_sql(sql, self.conn, params=[empresa])
         return df
     
@@ -137,6 +144,8 @@ class ContabilDBClient(DataClient):
         ORDER BY conta
         """
         
+        if self.enable_query_log:
+            log_query(sql, [empresa, ate, empresa, ate], self.query_log_file)
         df = pd.read_sql(
             sql, 
             self.conn, 
@@ -190,6 +199,8 @@ class ContabilDBClient(DataClient):
         ORDER BY conta
         """
         
+        if self.enable_query_log:
+            log_query(sql, [empresa, de, ate, empresa, de, ate], self.query_log_file)
         df = pd.read_sql(
             sql, 
             self.conn, 
@@ -254,6 +265,8 @@ class ContabilDBClient(DataClient):
         ORDER BY l.data_lan, l.codi_lote, l.nume_lan
         """
         
+        if self.enable_query_log:
+            log_query(sql, [empresa, inicio, fim], self.query_log_file)
         df = pd.read_sql(sql, self.conn, params=[empresa, inicio, fim])
         
         # Normaliza nomes das colunas para minúsculas
@@ -279,6 +292,9 @@ class ContabilDBClient(DataClient):
         """
         if not self.is_connected():
             raise RuntimeError("Não está conectado ao banco de dados. Chame connect() primeiro.")
+        
+        if self.enable_query_log:
+            log_query(sql, params, self.query_log_file)
         
         if params:
             return pd.read_sql(sql, self.conn, params=params)

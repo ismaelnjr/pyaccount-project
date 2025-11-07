@@ -1,0 +1,1 @@
+python imports/import_csv_to_sqlite.py --db contas.db --empresas sample_data/empresas.CSV --plano sample_data/plano_contas.CSV --saldos sample_data/saldos_iniciais.CSV --lanc sample_data/lancamentos.CSV --empresa 267

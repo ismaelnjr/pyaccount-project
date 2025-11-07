@@ -53,13 +53,16 @@ class _FinancialStatementBase:
         if colunas_pc is None:
             colunas_pc = df_pc.columns.tolist()
         
+        # Filtra apenas colunas que existem no DataFrame
+        colunas_pc_disponiveis = [c for c in colunas_pc if c in df_pc.columns]
+        
         # Cria coluna temporária para merge se necessário
         coluna_temp = f"{coluna_conta_pc}_str"
         if coluna_temp not in df_pc.columns:
             df_pc[coluna_temp] = df_pc[coluna_conta_pc]
         
         # Mescla
-        colunas_merge = [coluna_temp] + [c for c in colunas_pc if c != coluna_conta_pc and c != coluna_temp]
+        colunas_merge = [coluna_temp] + [c for c in colunas_pc_disponiveis if c != coluna_conta_pc and c != coluna_temp]
         df_result = df_result.merge(
             df_pc[colunas_merge],
             left_on=coluna_conta_df,
@@ -93,20 +96,26 @@ class _FinancialStatementBase:
         """
         # Preenche valores faltantes
         if "NOME_CTA" in df.columns:
-            df["NOME_CTA"] = df["NOME_CTA"].fillna(preencher_nome)
+            df["NOME_CTA"] = df["NOME_CTA"].fillna(preencher_nome).astype(str)
         if "CLAS_CTA" in df.columns:
-            df["CLAS_CTA"] = df["CLAS_CTA"].fillna(preencher_clas)
+            df["CLAS_CTA"] = df["CLAS_CTA"].fillna(preencher_clas).astype(str)
         
-        # Classifica contas sem classificação
-        if "BC_GROUP" in df.columns:
-            df["BC_GROUP"] = df.apply(
+        # Cria ou atualiza coluna BC_GROUP apenas se não existir ou estiver vazia
+        if "BC_GROUP" not in df.columns:
+            df["BC_GROUP"] = None
+        
+        # Classifica apenas contas sem BC_GROUP (se já foi calculado durante importação, mantém)
+        mask_sem_bc_group = df["BC_GROUP"].isna() | (df["BC_GROUP"] == "") | (df["BC_GROUP"].astype(str).str.strip() == "")
+        if mask_sem_bc_group.any():
+            df.loc[mask_sem_bc_group, "BC_GROUP"] = df.loc[mask_sem_bc_group].apply(
                 lambda row: account_mapper.classificar_beancount(
                     str(row.get("CLAS_CTA", "") or ""), 
-                    None
-                ) if pd.isna(row.get("BC_GROUP")) else row["BC_GROUP"],
+                    str(row.get("TIPO_CTA", ""))
+                ),
                 axis=1
             )
-            df["BC_GROUP"] = df["BC_GROUP"].fillna("Unknown")
+        
+        df["BC_GROUP"] = df["BC_GROUP"].fillna("Unknown").astype(str)
         
         return df
 
@@ -271,11 +280,12 @@ class IncomeStatementBuilder:
         Args:
             df_movimentacoes: DataFrame com movimentações do período.
                              Se agrupamento_periodo for None: deve ter colunas (conta, movimento).
-                             Se agrupamento_periodo for especificado: deve ter colunas (conta, periodo, movimento).
+                             Se agrupamento_periodo for "anual", "mensal" ou "trimestral": deve ter colunas (conta, periodo, movimento).
             df_plano_contas: DataFrame com plano de contas (deve ter colunas: CODI_CTA, CLAS_CTA, NOME_CTA, BC_GROUP)
             account_mapper: Instância de AccountMapper para classificação
             agrupamento_periodo: Tipo de agrupamento por período. Valores aceitos:
-                                None (sem agrupamento), "mensal" ou "trimestral"
+                                None (sem agrupamento, campo TOTAL PERIODO), "anual" (agrupa por anos como 2024, 2025),
+                                "mensal" (agrupa por meses como Jan/24, Fev/24) ou "trimestral" (agrupa por trimestres como 1T/24, 2T/24)
         """
         self.df_movimentacoes = df_movimentacoes
         self.df_plano_contas = df_plano_contas
@@ -287,17 +297,27 @@ class IncomeStatementBuilder:
         Gera estrutura da DRE.
         
         Returns:
-            Se agrupamento_periodo for None: DataFrame com colunas (Item, Valor)
-            Se agrupamento_periodo for especificado: DataFrame com colunas (Item + colunas dinâmicas por período + Total)
+            Se agrupamento_periodo for None: DataFrame com colunas (Item, TOTAL PERIODO)
+            Se agrupamento_periodo for "anual": DataFrame com colunas (Item + colunas dinâmicas por ano + Total)
+            Se agrupamento_periodo for "mensal" ou "trimestral": DataFrame com colunas (Item + colunas dinâmicas por período + Total)
         """
         if self.df_movimentacoes is None or self.df_movimentacoes.empty:
             return pd.DataFrame()
         
-        # Se há agrupamento por período, usa método específico
-        if self.agrupamento_periodo:
+        # Se há agrupamento por período (anual, mensal ou trimestral), usa método específico
+        if self.agrupamento_periodo in ["anual", "mensal", "trimestral"]:
             return self._processar_dre_por_periodo()
         
-        # Comportamento padrão (sem agrupamento)
+        # Se agrupamento_periodo é None, trata como sem agrupamento (campo TOTAL PERIODO)
+        return self._processar_dre_anual()
+    
+    def _processar_dre_anual(self) -> pd.DataFrame:
+        """
+        Processa DRE sem agrupamento por período (agrupamento_periodo=None).
+        
+        Returns:
+            DataFrame com colunas (Item, TOTAL PERIODO)
+        """
         # Mescla movimentações com plano de contas
         df_dre = _FinancialStatementBase._merge_com_plano_contas(
             self.df_movimentacoes,
@@ -494,7 +514,14 @@ class IncomeStatementBuilder:
         periodos_unicos = df_dre["periodo"].unique().tolist()
         
         # Ordena períodos cronologicamente
-        if self.agrupamento_periodo == "mensal":
+        if self.agrupamento_periodo == "anual":
+            # Ordena por ano numericamente: "2024", "2025", etc.
+            periodos_ordenados = sorted(
+                periodos_unicos,
+                key=lambda p: int(p) if p.isdigit() else 0
+            )
+            periodos = periodos_ordenados
+        elif self.agrupamento_periodo == "mensal":
             # Ordena por data: converte "Jan/24" para datetime e ordena
             periodos_com_data = []
             for p in periodos_unicos:
@@ -722,6 +749,9 @@ class IncomeStatementBuilder:
     
     def _debug_unknown_accounts(self, df_dre: pd.DataFrame) -> None:
         """Alerta sobre contas classificadas como Unknown."""
+        if "BC_GROUP" not in df_dre.columns:
+            return  # Se BC_GROUP não existe, não há nada para debugar
+        
         contas_unknown = df_dre[df_dre["BC_GROUP"] == "Unknown"]
         if not contas_unknown.empty:
             print(
@@ -789,7 +819,7 @@ class TrialBalanceBuilder:
                 right_on="conta",
                 how="left"
             )
-            df_balancete["Saldo Inicial"] = df_balancete["saldo"].fillna(0.0)
+            df_balancete["Saldo Inicial"] = pd.to_numeric(df_balancete["saldo"], errors="coerce").fillna(0.0)
             df_balancete = df_balancete.drop(columns=["conta", "saldo"], errors="ignore")
         else:
             df_balancete["Saldo Inicial"] = 0.0
@@ -813,7 +843,7 @@ class TrialBalanceBuilder:
                     right_on="conta",
                     how="left"
                 )
-                df_balancete["Total Débitos"] = df_balancete["Total Débitos"].fillna(0.0)
+                df_balancete["Total Débitos"] = pd.to_numeric(df_balancete["Total Débitos"], errors="coerce").fillna(0.0)
                 df_balancete = df_balancete.drop(columns=["conta"], errors="ignore")
             else:
                 df_balancete["Total Débitos"] = 0.0
@@ -836,7 +866,7 @@ class TrialBalanceBuilder:
                     right_on="conta",
                     how="left"
                 )
-                df_balancete["Total Créditos"] = df_balancete["Total Créditos"].fillna(0.0)
+                df_balancete["Total Créditos"] = pd.to_numeric(df_balancete["Total Créditos"], errors="coerce").fillna(0.0)
                 df_balancete = df_balancete.drop(columns=["conta"], errors="ignore")
             else:
                 df_balancete["Total Créditos"] = 0.0
