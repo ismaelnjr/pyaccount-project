@@ -9,6 +9,8 @@ sys.path.insert(0, str(project_root))
 
 import streamlit as st
 from datetime import date
+import configparser
+from pathlib import Path
 from pyaccount.data.clients.sqlite import SQLiteClient
 from pyaccount.core.account_classifier import TipoPlanoContas, obter_classificacao_do_modelo
 
@@ -75,7 +77,8 @@ st.sidebar.header("📊 Classificação")
 modelo_opcoes = {
     "Padrão Brasileiro": TipoPlanoContas.PADRAO,
     "Simplificado": TipoPlanoContas.SIMPLIFICADO,
-    "IFRS": TipoPlanoContas.IFRS
+    "IFRS": TipoPlanoContas.IFRS,
+    "Customizado": "customizado"
 }
 modelo_selecionado_nome = st.sidebar.selectbox(
     "Modelo de Plano de Contas",
@@ -85,12 +88,66 @@ modelo_selecionado_nome = st.sidebar.selectbox(
 )
 modelo_selecionado = modelo_opcoes[modelo_selecionado_nome]
 
+# Carrega classificação customizada se modelo=customizado
+classificacao_customizada = None
+if modelo_selecionado == "customizado":
+    # Tenta carregar do config.ini
+    config_path = project_root / "config.ini"
+    if config_path.exists():
+        try:
+            cfg = configparser.ConfigParser()
+            cfg.read(config_path)
+            
+            if cfg.has_section("classification"):
+                # Extrai clas_base (opcional)
+                clas_base_str = cfg.get("classification", "clas_base", fallback="").strip()
+                clas_base = None
+                if clas_base_str:
+                    clas_base_map = {
+                        "CLASSIFICACAO_PADRAO_BR": TipoPlanoContas.PADRAO,
+                        "padrao": TipoPlanoContas.PADRAO,
+                        "CLASSIFICACAO_SIMPLIFICADO": TipoPlanoContas.SIMPLIFICADO,
+                        "simplificado": TipoPlanoContas.SIMPLIFICADO,
+                        "CLASSIFICACAO_IFRS": TipoPlanoContas.IFRS,
+                        "ifrs": TipoPlanoContas.IFRS,
+                    }
+                    clas_base = clas_base_map.get(clas_base_str)
+                
+                # Extrai todas as entradas clas_* (exceto clas_base)
+                classificacao_dict = {}
+                for chave, valor in cfg.items("classification"):
+                    if chave.startswith("clas_") and chave != "clas_base":
+                        prefixo = chave.replace("clas_", "")
+                        classificacao_dict[prefixo] = valor.strip()
+                
+                # Valida: se não houver clas_base e nenhuma entrada clas_*, gera erro
+                if not clas_base and not classificacao_dict:
+                    st.sidebar.error("⚠️ modelo=customizado requer pelo menos clas_base ou entradas clas_* na seção [classification]")
+                else:
+                    # Obtém classificação completa usando clas_base e customizações
+                    classificacao_customizada = obter_classificacao_do_modelo(
+                        modelo=None,
+                        customizacoes=classificacao_dict,
+                        clas_base=clas_base,
+                        usar_apenas_customizacoes=True
+                    )
+                    st.sidebar.success("✅ Classificação customizada carregada do config.ini")
+        except Exception as e:
+            st.sidebar.error(f"❌ Erro ao carregar classificação customizada: {e}")
+            classificacao_customizada = None
+    else:
+        st.sidebar.warning("⚠️ config.ini não encontrado. Usando classificação padrão.")
+        classificacao_customizada = None
+else:
+    # Modelo padrão: usa obter_classificacao_do_modelo normalmente
+    classificacao_customizada = obter_classificacao_do_modelo(modelo_selecionado)
+
 # Salva no session_state para as páginas acessarem
 st.session_state["empresa"] = empresa
 st.session_state["inicio"] = inicio
 st.session_state["fim"] = fim
 st.session_state["modelo_plano_contas"] = modelo_selecionado
-st.session_state["classificacao_customizada"] = obter_classificacao_do_modelo(modelo_selecionado)
+st.session_state["classificacao_customizada"] = classificacao_customizada
 
 st.sidebar.markdown("---")
 st.sidebar.info("💡 Use o menu lateral para navegar entre as páginas de relatórios.")

@@ -181,9 +181,18 @@ def import_plano_contas(
     from pyaccount.core.account_mapper import AccountMapper
     from pyaccount.core.account_classifier import obter_classificacao_do_modelo, TipoPlanoContas
     
-    # Converte string do modelo para enum
+    # Converte string do modelo para enum ou trata customizado
     modelo_enum = None
-    if modelo:
+    clas_base = None
+    usar_apenas_customizacoes = False
+    
+    if modelo and modelo.lower() == "customizado":
+        # Modelo customizado: usa apenas classificacao_customizada
+        usar_apenas_customizacoes = True
+        # clas_base pode ser passado via classificacao_customizada se necessário
+        # Por enquanto, assumimos que classificacao_customizada já contém a classificação completa
+        # ou que clas_base será None (dicionário vazio como base)
+    elif modelo:
         modelo_map = {
             "padrao": TipoPlanoContas.PADRAO,
             "simplificado": TipoPlanoContas.SIMPLIFICADO,
@@ -192,7 +201,12 @@ def import_plano_contas(
         modelo_enum = modelo_map.get(modelo.lower())
     
     # Obtém classificação
-    classificacao = obter_classificacao_do_modelo(modelo_enum, classificacao_customizada)
+    classificacao = obter_classificacao_do_modelo(
+        modelo_enum, 
+        classificacao_customizada,
+        clas_base=clas_base,
+        usar_apenas_customizacoes=usar_apenas_customizacoes
+    )
     mapper = AccountMapper(classificacao)
     
     # Calcula BC_GROUP para cada conta

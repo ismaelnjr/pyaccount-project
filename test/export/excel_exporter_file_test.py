@@ -22,23 +22,27 @@ class TestExcelExporterFile(unittest.TestCase):
     def test_excel_export_from_files(self):
         """Testa geração de arquivo Excel utilizando arquivos CSV da pasta sample_data."""
         
-        # Caminho para pasta sample_data (relativo ao projeto)
-        etc_dir = Path(project_root) / "sample_data"
-        
-        # Verifica se os arquivos existem
-        saldos_file = etc_dir / "saldos_iniciais.CSV"
-        lancamentos_file = etc_dir / "lancamentos.CSV"
-        
-        if not saldos_file.exists() or not lancamentos_file.exists():
-            self.skipTest("Arquivos CSV não encontrados em sample_data/")
-        
-        # Carrega configurações do config.ini como padrão
+        # Carrega configurações do config.ini
         config = carregar_config_teste()
         
+        # Obtém diretório base e nomes de arquivos do config
+        base_dir = Path(project_root) / config.get("base_dir", "sample_data")
+        saldos_file_name = config.get("saldos_file", "saldos_iniciais.CSV")
+        lancamentos_file_name = config.get("lancamentos_file", "lancamentos.CSV")
+        plano_contas_file_name = config.get("plano_contas_file")  # Pode ser None
+        
+        # Caminhos completos dos arquivos
+        saldos_file = base_dir / saldos_file_name
+        lancamentos_file = base_dir / lancamentos_file_name
+        
+        # Verifica se os arquivos existem
+        if not saldos_file.exists() or not lancamentos_file.exists():
+            self.skipTest(f"Arquivos CSV não encontrados em {base_dir}")
+        
         print(f"\n--- Teste: Gerando arquivo Excel a partir de arquivos CSV ---")
-        print(f"  - Diretório: {etc_dir}")
-        print(f"  - Saldos: {saldos_file.exists()}")
-        print(f"  - Lançamentos: {lancamentos_file.exists()}")
+        print(f"  - Diretório: {base_dir}")
+        print(f"  - Saldos: {saldos_file.exists()} ({saldos_file_name})")
+        print(f"  - Lançamentos: {lancamentos_file.exists()} ({lancamentos_file_name})")
         
         # Lê lançamentos para extrair empresa e período
         # O arquivo CSV não tem cabeçalho, então precisamos definir manualmente
@@ -94,26 +98,45 @@ class TestExcelExporterFile(unittest.TestCase):
         print(f"  - Empresa: {empresa}")
         print(f"  - Período: {inicio_periodo} a {fim_periodo}")
         
-        # Cria cliente de arquivos (plano de contas será criado automaticamente)
+        # Cria cliente de arquivos usando configurações do config.ini
         file_client = FileDataClient(
-            base_dir=etc_dir,
-            saldos_file="saldos_iniciais.CSV",
-            lancamentos_file="lancamentos.CSV"
-            # plano_contas_file não fornecido - será criado automaticamente
+            base_dir=base_dir,
+            saldos_file=saldos_file_name,
+            lancamentos_file=lancamentos_file_name,
+            plano_contas_file=plano_contas_file_name  # None = será criado automaticamente
+            
         )
         
         print("✓ FileDataClient criado")
         
         try:
-            # Converte modelo do config para enum TipoPlanoContas
+            # Converte modelo do config para enum TipoPlanoContas ou trata customizado
             modelo_str = config["modelo"].lower()
-            modelo_enum = TipoPlanoContas.SIMPLIFICADO  # padrão
-            if modelo_str == "padrao":
-                modelo_enum = TipoPlanoContas.PADRAO
-            elif modelo_str == "simplificado":
-                modelo_enum = TipoPlanoContas.SIMPLIFICADO
-            elif modelo_str == "ifrs":
-                modelo_enum = TipoPlanoContas.IFRS
+            modelo_enum = None
+            classificacao_customizada = None
+            
+            if modelo_str == "customizado":
+                # Modelo customizado: usa classificação do config.ini
+                from pyaccount.core.account_classifier import obter_classificacao_do_modelo
+                clas_base = config.get("clas_base")
+                classificacao_customizada = config.get("classificacao_customizada") or {}
+                # Obtém classificação completa usando clas_base e customizações
+                classificacao_final = obter_classificacao_do_modelo(
+                    modelo=None,
+                    customizacoes=classificacao_customizada,
+                    clas_base=clas_base,
+                    usar_apenas_customizacoes=True
+                )
+                classificacao_customizada = classificacao_final
+            else:
+                # Modelo padrão: converte para enum
+                modelo_enum = TipoPlanoContas.SIMPLIFICADO  # padrão
+                if modelo_str == "padrao":
+                    modelo_enum = TipoPlanoContas.PADRAO
+                elif modelo_str == "simplificado":
+                    modelo_enum = TipoPlanoContas.SIMPLIFICADO
+                elif modelo_str == "ifrs":
+                    modelo_enum = TipoPlanoContas.IFRS
             
             # Cria exportador Excel com FileDataClient
             exporter = ExcelExporter(
@@ -122,7 +145,8 @@ class TestExcelExporterFile(unittest.TestCase):
                 inicio=inicio_periodo,
                 fim=fim_periodo,
                 modelo=modelo_enum,
-                agrupamento_periodo=config["agrupamento_periodo"]
+                agrupamento_periodo=config["agrupamento_periodo"],
+                classificacao_customizada=classificacao_customizada
             )
             
             print("✓ ExcelExporter criado")

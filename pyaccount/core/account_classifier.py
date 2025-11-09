@@ -143,23 +143,37 @@ MODELOS_CLASSIFICACAO: Dict[TipoPlanoContas, Dict[str, str]] = {
 
 def obter_classificacao_do_modelo(
     modelo: Optional[TipoPlanoContas] = None,
-    customizacoes: Optional[Dict[str, str]] = None
+    customizacoes: Optional[Dict[str, str]] = None,
+    clas_base: Optional[TipoPlanoContas] = None,
+    usar_apenas_customizacoes: bool = False
 ) -> Dict[str, str]:
     """
     Obtém o dicionário de classificação baseado no modelo, aplicando customizações se fornecidas.
     
     Args:
-        modelo: Tipo de plano de contas. Se None, usa CLASSIFICACAO_PADRAO_BR.
+        modelo: Tipo de plano de contas. Se None, usa CLASSIFICACAO_PADRAO_BR (a menos que usar_apenas_customizacoes=True).
         customizacoes: Dicionário opcional com customizações. Se fornecido, sobrescreve valores do modelo.
+        clas_base: Tipo de plano de contas a usar como base quando usar_apenas_customizacoes=True.
+                  Se fornecido, tem prioridade sobre modelo.
+        usar_apenas_customizacoes: Se True, começa com dicionário vazio (ou clas_base se fornecido).
+                                   Se False, usa modelo ou CLASSIFICACAO_PADRAO_BR como base.
     
     Returns:
-        Dicionário de classificação final (modelo + customizações)
+        Dicionário de classificação final (modelo/clas_base + customizações)
     """
     # Determina o dicionário base
-    if modelo and modelo in MODELOS_CLASSIFICACAO:
-        classificacao = MODELOS_CLASSIFICACAO[modelo].copy()
+    if usar_apenas_customizacoes:
+        # Modo customizado: começa vazio ou com clas_base
+        if clas_base and clas_base in MODELOS_CLASSIFICACAO:
+            classificacao = MODELOS_CLASSIFICACAO[clas_base].copy()
+        else:
+            classificacao = {}
     else:
-        classificacao = CLASSIFICACAO_PADRAO_BR.copy()
+        # Modo normal: usa modelo ou padrão
+        if modelo and modelo in MODELOS_CLASSIFICACAO:
+            classificacao = MODELOS_CLASSIFICACAO[modelo].copy()
+        else:
+            classificacao = CLASSIFICACAO_PADRAO_BR.copy()
     
     # Aplica customizações se houver (têm prioridade)
     if customizacoes:

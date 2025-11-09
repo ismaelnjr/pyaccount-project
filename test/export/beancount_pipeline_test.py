@@ -31,15 +31,33 @@ class TestBeancountPipeline(unittest.TestCase):
         fim_periodo = date.fromisoformat(config["data_fim"])
         dia_anterior = inicio_periodo - timedelta(days=1)  
         
-        # Converte modelo do config para enum TipoPlanoContas
+        # Converte modelo do config para enum TipoPlanoContas ou trata customizado
         modelo_str = config["modelo"].lower()
-        modelo_enum = TipoPlanoContas.SIMPLIFICADO  # padrão
-        if modelo_str == "padrao":
-            modelo_enum = TipoPlanoContas.PADRAO
-        elif modelo_str == "simplificado":
-            modelo_enum = TipoPlanoContas.SIMPLIFICADO
-        elif modelo_str == "ifrs":
-            modelo_enum = TipoPlanoContas.IFRS
+        modelo_enum = None
+        classificacao_customizada = None
+        
+        if modelo_str == "customizado":
+            # Modelo customizado: usa classificação do config.ini
+            from pyaccount.core.account_classifier import obter_classificacao_do_modelo
+            clas_base = config.get("clas_base")
+            classificacao_customizada = config.get("classificacao_customizada") or {}
+            # Obtém classificação completa usando clas_base e customizações
+            classificacao_final = obter_classificacao_do_modelo(
+                modelo=None,
+                customizacoes=classificacao_customizada,
+                clas_base=clas_base,
+                usar_apenas_customizacoes=True
+            )
+            classificacao_customizada = classificacao_final
+        else:
+            # Modelo padrão: converte para enum
+            modelo_enum = TipoPlanoContas.SIMPLIFICADO  # padrão
+            if modelo_str == "padrao":
+                modelo_enum = TipoPlanoContas.PADRAO
+            elif modelo_str == "simplificado":
+                modelo_enum = TipoPlanoContas.SIMPLIFICADO
+            elif modelo_str == "ifrs":
+                modelo_enum = TipoPlanoContas.IFRS
         
         # Passo 1: Gera saldos de abertura em 
         print(f"\n--- Passo 1: Gerando saldos de abertura em {dia_anterior} ---")
@@ -51,7 +69,7 @@ class TestBeancountPipeline(unittest.TestCase):
             ate=dia_anterior,
             saida=config["saida"],
             modelo=modelo_enum,
-            
+            classificacao_customizada=classificacao_customizada
         )
         saldos_abertura_path = builder_saldos.execute()
         print(f"✓ Saldos de abertura gerados: {saldos_abertura_path}")
@@ -72,6 +90,7 @@ class TestBeancountPipeline(unittest.TestCase):
             outdir=config["saida"],
             saldos_path=str(saldos_abertura_path),
             modelo=modelo_enum,
+            classificacao_customizada=classificacao_customizada
         )
         bean_path = pipeline.execute()
         print(f"✓ Arquivo Beancount gerado: {bean_path}")

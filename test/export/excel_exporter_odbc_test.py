@@ -35,7 +35,9 @@ class TestExcelExporterODBC(unittest.TestCase):
         db_client = ContabilDBClient(
             dsn=config["dsn"],
             user=config["user"],
-            password=config["password"]
+            password=config["password"],
+            enable_query_log=config.get("enable_query_log", False),
+            query_log_file=config.get("query_log_file", "logs/queries.log")
         )
         
         try:
@@ -43,15 +45,33 @@ class TestExcelExporterODBC(unittest.TestCase):
             db_client.connect()
             print("✓ Conectado ao banco de dados")
             
-            # Converte modelo do config para enum TipoPlanoContas
+            # Converte modelo do config para enum TipoPlanoContas ou trata customizado
             modelo_str = config["modelo"].lower()
-            modelo_enum = TipoPlanoContas.SIMPLIFICADO  # padrão
-            if modelo_str == "padrao":
-                modelo_enum = TipoPlanoContas.PADRAO
-            elif modelo_str == "simplificado":
-                modelo_enum = TipoPlanoContas.SIMPLIFICADO
-            elif modelo_str == "ifrs":
-                modelo_enum = TipoPlanoContas.IFRS
+            modelo_enum = None
+            classificacao_customizada = None
+            
+            if modelo_str == "customizado":
+                # Modelo customizado: usa classificação do config.ini
+                from pyaccount.core.account_classifier import obter_classificacao_do_modelo
+                clas_base = config.get("clas_base")
+                classificacao_customizada = config.get("classificacao_customizada") or {}
+                # Obtém classificação completa usando clas_base e customizações
+                classificacao_final = obter_classificacao_do_modelo(
+                    modelo=None,
+                    customizacoes=classificacao_customizada,
+                    clas_base=clas_base,
+                    usar_apenas_customizacoes=True
+                )
+                classificacao_customizada = classificacao_final
+            else:
+                # Modelo padrão: converte para enum
+                modelo_enum = TipoPlanoContas.SIMPLIFICADO  # padrão
+                if modelo_str == "padrao":
+                    modelo_enum = TipoPlanoContas.PADRAO
+                elif modelo_str == "simplificado":
+                    modelo_enum = TipoPlanoContas.SIMPLIFICADO
+                elif modelo_str == "ifrs":
+                    modelo_enum = TipoPlanoContas.IFRS
             
             # Cria exportador Excel
             exporter = ExcelExporter(
@@ -60,7 +80,8 @@ class TestExcelExporterODBC(unittest.TestCase):
                 inicio=inicio_periodo,
                 fim=fim_periodo,
                 modelo=modelo_enum,
-                agrupamento_periodo=config["agrupamento_periodo"]
+                agrupamento_periodo=config["agrupamento_periodo"],
+                classificacao_customizada=classificacao_customizada
             )
             
             # Exporta para Excel
